@@ -1264,13 +1264,15 @@ def create_project_clusters(
         # This prevents repeated formats like "divorce with children" from being split or renamed by unrelated templates.
         working["primary_project_text"] = working["project_signature"]
     else:
-        # Sub-projects can use the richer time-entry text if available, but still fall back to the normalized signature.
+        # Sub-projects should follow the same signature-first logic.
+        # Time-entry text is useful context, but if it becomes the main driver it can randomly split similar matters.
         normalized_source = working[source_col].fillna("").apply(normalize_legal_text_for_clustering)
         working["primary_project_text"] = np.where(
-            normalized_source.str.len() >= 3,
-            normalized_source,
+            working["project_signature"].astype(str).str.len() >= 3,
             working["project_signature"],
+            normalized_source,
         )
+        working["secondary_project_text"] = normalized_source
 
     working = working[working["primary_project_text"].astype(str).str.len() >= 3].copy().reset_index(drop=True)
 
@@ -1281,7 +1283,8 @@ def create_project_clusters(
     n_usable = working[matter_name_col].nunique()
 
     if cluster_prefix == "subcluster":
-        k_selected = choose_subcluster_count(n_usable)
+        unique_signature_count = working["project_signature"].nunique(dropna=True)
+        k_selected = min(choose_subcluster_count(n_usable), max(1, unique_signature_count))
         candidate_ks = [k_selected] if k_selected > 1 else []
         k_selection_results = pd.DataFrame()
         seeded_category_count = 0
