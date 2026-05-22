@@ -175,6 +175,9 @@ ALTFEE_BG = "#FFFFFF"
 ALTFEE_GRAY = "#B8B8B8"
 ALTFEE_GRAY_DARK = "#707070"
 ALTFEE_RED = "#D95F5F"
+INDICATOR_GOOD = "#4CAF7D"
+INDICATOR_OK = "#EDC948"
+INDICATOR_BAD = "#D95F5F"
 
 PROJECT_BASE_COLORS = [
     "#54B39A",
@@ -519,6 +522,139 @@ def make_ngrams(tokens: list[str], n: int) -> list[str]:
 
 def clean_project_text(value: object) -> str:
     return normalize_legal_text_for_clustering(value)
+
+
+# === Project signature normalization and labeling functions ===
+def normalize_matter_name_signature(value: object) -> str:
+    """
+    Build a stable matter-name signature before clustering.
+    This is intentionally more literal than template matching, so repeated firm formats
+    like "divorce with children" stay together instead of being renamed by templates.
+    """
+    text = "" if pd.isna(value) else str(value).lower()
+    text = re.sub(r"[-_/|]+", " ", text)
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    junk_phrases = [
+        "closed", "trial billing matter", "trial billing", "billing matter",
+        "test matter", "sample matter", "new matter", "old matter",
+    ]
+    for phrase in junk_phrases:
+        text = re.sub(rf"\b{re.escape(phrase)}\b", " ", text)
+
+    phrase_replacements = {
+        "dissolution of marriage": "divorce",
+        "marriage dissolution": "divorce",
+        "divorce children": "divorce with children",
+        "divorce child": "divorce with children",
+        "divorce with child": "divorce with children",
+        "divorce w children": "divorce with children",
+        "divorce w child": "divorce with children",
+        "divorce no children": "divorce no children",
+        "divorce without children": "divorce no children",
+        "divorce no child": "divorce no children",
+        "contested divorce children": "contested divorce with children",
+        "contested divorce with child": "contested divorce with children",
+        "uncontested divorce children": "uncontested divorce with children",
+        "post judgment": "postjudgment",
+        "post decree": "postjudgment",
+        "non disclosure agreement": "nda",
+        "power of attorney": "power attorney",
+        "estate planning": "estate planning",
+    }
+
+    for source, target in phrase_replacements.items():
+        text = re.sub(rf"\b{re.escape(source)}\b", target, text)
+
+    tokens = tokenize_text(text)
+
+    # Keep terms that are actually project-defining. Do not let generic legal/admin words drive the signature.
+    signature_stopwords = PROJECT_STOPWORDS.union({
+        "with", "without", "and", "the", "for", "from", "into", "onto", "miscellaneous",
+        "misc", "project", "projects", "matter", "matters",
+    })
+    tokens = [normalize_legal_token(token) for token in tokens if token not in signature_stopwords and not token.isdigit() and len(token) > 2]
+
+    # Preserve important family-law modifiers.
+    original_text = text
+    if "divorce" in tokens:
+        if "child" in tokens or "children" in tokens:
+            if "contested" in tokens:
+                return "contested divorce children"
+            if "uncontested" in tokens:
+                return "uncontested divorce children"
+            return "divorce children"
+        if "no children" in original_text or "without children" in original_text:
+            return "divorce no children"
+        return "divorce"
+
+    if "custody" in tokens:
+        return "custody"
+
+    if "support" in tokens and ("child" in tokens or "children" in tokens):
+        return "child support"
+
+    if "postjudgment" in tokens:
+        return "postjudgment"
+
+    if not tokens:
+        return ""
+
+    # Bigrams/trigrams are more useful than isolated words for legal project types.
+    trigrams = make_ngrams(tokens, 3)
+    bigrams = make_ngrams(tokens, 2)
+    if trigrams:
+        return trigrams[0]
+    if bigrams:
+        return bigrams[0]
+    return tokens[0]
+
+
+def title_from_signature(signature: str) -> str:
+    signature = re.sub(r"\s+", " ", str(signature).strip())
+    if not signature:
+        return "Unclear / Needs Review"
+
+    label_map = {
+        "divorce children": "Divorce With Children",
+        "contested divorce children": "Contested Divorce With Children",
+        "uncontested divorce children": "Uncontested Divorce With Children",
+        "divorce no children": "Divorce Without Children",
+        "divorce": "Divorce",
+        "custody": "Custody",
+        "child support": "Child Support",
+        "postjudgment": "Post Judgment",
+    }
+    return label_map.get(signature, signature.title())
+
+
+def dominant_signature_label(values: pd.Series, min_share: float = 0.45) -> tuple[str | None, float]:
+    signatures = values.dropna().map(normalize_matter_name_signature)
+    signatures = signatures[signatures.str.len() > 0]
+    if signatures.empty:
+        return None, 0.0
+
+    shares = signatures.value_counts(normalize=True)
+    top_signature = shares.index[0]
+    top_share = float(shares.iloc[0])
+
+    if top_share >= min_share:
+        return title_from_signature(top_signature), top_share
+
+    return None, top_share
+
+
+# --- Cluster label validation ---
+def validate_cluster_label_against_examples(project_name: str, examples: pd.Series, min_overlap: int = 1) -> bool:
+    label_tokens = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(project_name))))
+    example_text = " ".join(examples.dropna().astype(str).head(25).tolist())
+    example_tokens = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(example_text))))
+
+    if not label_tokens or not example_tokens:
+        return True
+
+    return len(label_tokens.intersection(example_tokens)) >= min_overlap
 
 
 def get_template_paths() -> tuple[Path | None, Path | None]:
@@ -1121,8 +1257,22 @@ def create_project_clusters(
         parent_project_name = working["project_name"].mode().iloc[0]
 
     working["matter_name"] = working[matter_name_col]
-    working["primary_project_text"] = working[source_col].fillna("").apply(normalize_legal_text_for_clustering)
-    working = working[working["primary_project_text"].str.len() >= 3].copy().reset_index(drop=True)
+    working["project_signature"] = working[matter_name_col].fillna("").apply(normalize_matter_name_signature)
+
+    if cluster_prefix == "cluster":
+        # Main clustering should be driven by normalized matter-name signatures.
+        # This prevents repeated formats like "divorce with children" from being split or renamed by unrelated templates.
+        working["primary_project_text"] = working["project_signature"]
+    else:
+        # Sub-projects can use the richer time-entry text if available, but still fall back to the normalized signature.
+        normalized_source = working[source_col].fillna("").apply(normalize_legal_text_for_clustering)
+        working["primary_project_text"] = np.where(
+            normalized_source.str.len() >= 3,
+            normalized_source,
+            working["project_signature"],
+        )
+
+    working = working[working["primary_project_text"].astype(str).str.len() >= 3].copy().reset_index(drop=True)
 
     if working.empty:
         empty_summary_cols = [cluster_col, label_col, "matter_count", "total_billing", "avg_billing", "top_terms", "top_bigrams", "example_matter_names"]
@@ -1230,17 +1380,28 @@ def create_project_clusters(
         combined_terms = ", ".join(top_terms + top_bigrams)
         combined_examples = " | ".join(raw_examples[:10])
 
-        project_name = None
-        if use_ai:
+        signature_name, signature_share = dominant_signature_label(cluster_df[matter_name_col], min_share=0.35)
+
+        project_name = signature_name
+
+        if not project_name and use_ai:
             project_name = call_ollama_project_label(top_terms + top_bigrams, raw_examples[:10])
 
         if not project_name:
             dominant_seed = None
             if "seed_template_category" in cluster_df.columns and cluster_df["seed_template_category"].notna().any():
                 seed_counts = cluster_df["seed_template_category"].dropna().value_counts(normalize=True)
-                if not seed_counts.empty and seed_counts.iloc[0] >= 0.60:
+                if not seed_counts.empty and seed_counts.iloc[0] >= 0.75:
                     dominant_seed = seed_counts.index[0]
             project_name = dominant_seed or fallback_project_name(top_terms + top_bigrams, raw_examples[:10])
+
+        if not validate_cluster_label_against_examples(project_name, cluster_df[matter_name_col]):
+            fallback_signature_name, fallback_signature_share = dominant_signature_label(cluster_df[matter_name_col], min_share=0.25)
+            if fallback_signature_name:
+                project_name = fallback_signature_name
+                signature_share = fallback_signature_share
+            else:
+                project_name = fallback_project_name(top_terms + top_bigrams, raw_examples[:10])
 
         if cluster_prefix == "subcluster" and parent_project_name:
             project_name = infer_specific_subproject_label(parent_project_name, project_name, combined_terms, combined_examples)
@@ -1270,6 +1431,7 @@ def create_project_clusters(
             "top_terms": ", ".join(top_terms),
             "top_bigrams": ", ".join(top_bigrams),
             "example_matter_names": " | ".join(examples),
+            "dominant_signature_share": signature_share,
         })
 
         if progress_bar is not None:
@@ -1322,6 +1484,55 @@ def coefficient_of_variation(series: pd.Series) -> float:
     if clean.empty or clean.mean() == 0:
         return np.nan
     return clean.std() / clean.mean()
+
+
+# --- Variability interpretation and card rendering ---
+def interpret_variability_coefficient(cv_value: float) -> dict[str, str]:
+    if pd.isna(cv_value):
+        return {
+            "label": "Not available",
+            "description": "Not enough hour data to estimate variability.",
+            "color": ALTFEE_GRAY_DARK,
+        }
+
+    if cv_value < 0.60:
+        return {
+            "label": "Low variability",
+            "description": "Effort is relatively predictable across matters.",
+            "color": INDICATOR_GOOD,
+        }
+
+    if cv_value <= 1.20:
+        return {
+            "label": "Medium variability",
+            "description": "Effort changes meaningfully between matters.",
+            "color": INDICATOR_OK,
+        }
+
+    return {
+        "label": "High variability",
+        "description": "Inconsistent effort, scope the project more carefully.",
+        "color": INDICATOR_BAD,
+    }
+
+
+def render_variability_card(cv_value: float) -> None:
+    interpretation = interpret_variability_coefficient(cv_value)
+    value = "N/A" if pd.isna(cv_value) else f"{cv_value:.2f}"
+
+    st.markdown(
+        f"""
+        <div class="metric-card" style="border-left: 7px solid {interpretation['color']};">
+            <div class="metric-label">Hours Variability</div>
+            <div style="display: flex; align-items: baseline; gap: 0.65rem; margin-bottom: 0.15rem;">
+                <span class="metric-value" style="color: {interpretation['color']}; margin-bottom: 0;">{value}</span>
+                <span style="color: {interpretation['color']}; font-size: 1rem; font-weight: 800;">{interpretation['label']}</span>
+            </div>
+            <div class="metric-help">{interpretation['description']}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def summarize_cluster_detail(cluster_df: pd.DataFrame) -> dict[str, float]:
@@ -2024,13 +2235,11 @@ with clustering_tab:
 
     cluster_summary = st.session_state["cluster_summary"]
     clustered_matters = st.session_state["clustered_matters"]
-    if "display_label" not in cluster_summary.columns or "display_label" not in clustered_matters.columns:
-        st.warning("Cluster output is stale. Click Run cluster analysis again to refresh the new project view.")
-        st.stop()
 
     project_summary = aggregate_project_categories(cluster_summary)
     top_project_names = project_summary.head(3)["project_name"].tolist()
     project_color_map = get_project_color_map(top_project_names)
+
     subproject_candidate_projects = set(
         clustered_matters.groupby("project_name")[matter_name_col]
         .nunique()
@@ -2101,6 +2310,7 @@ with clustering_tab:
     if subcluster_key in st.session_state["subclusters_by_cluster"]:
         active_subcluster_summary = st.session_state["subclusters_by_cluster"][subcluster_key]["summary"]
         active_subclustered_matters = st.session_state["subclusters_by_cluster"][subcluster_key]["matters"]
+
     if active_subcluster_summary is not None and not active_subcluster_summary.empty:
         active_subcluster_summary = active_subcluster_summary.copy()
         active_subclustered_matters = active_subclustered_matters.copy()
@@ -2151,16 +2361,13 @@ with clustering_tab:
             key="project_detail_time_grouping_radio",
         )
 
-    if detail_granularity is None:
-        detail_granularity = default_granularity
-
     detail = summarize_cluster_detail(selected_cluster_df)
 
     detail_cols = st.columns(4)
     with detail_cols[0]:
-        render_metric_card("Matters", format_number(detail["matters"]), "Selected cluster")
+        render_metric_card("Matters", format_number(detail["matters"]), "Selected project")
     with detail_cols[1]:
-        render_metric_card("Total Billing", format_currency(detail["total_billing"]), "Cluster revenue")
+        render_metric_card("Total Billing", format_currency(detail["total_billing"]), "Project revenue")
     with detail_cols[2]:
         render_metric_card("Avg. Billing", format_currency(detail["avg_billing"]), "Per matter")
     with detail_cols[3]:
@@ -2185,12 +2392,11 @@ with clustering_tab:
     if hours_available:
         metric_cols_2 = st.columns(3)
         with metric_cols_2[0]:
-            render_metric_card("Total Hours", format_number(detail["total_hours"]), "Cluster workload")
+            render_metric_card("Total Hours", format_number(detail["total_hours"]), "Project workload")
         with metric_cols_2[1]:
             render_metric_card("Avg. Hours", format_number(detail["avg_hours"]), "Per matter")
         with metric_cols_2[2]:
-            cv_value = "N/A" if pd.isna(detail["hours_cv"]) else f"{detail['hours_cv']:.2f}"
-            render_metric_card("Hours Variability", cv_value, "Coefficient of variation")
+            render_variability_card(detail["hours_cv"])
 
         detail_chart_cols = st.columns(2)
         with detail_chart_cols[0]:
