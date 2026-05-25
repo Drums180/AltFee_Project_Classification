@@ -693,6 +693,44 @@ def get_template_paths() -> tuple[Path | None, Path | None]:
     return None, None
 
 
+# === Sample account helpers ===
+def get_repo_root() -> Path:
+    """Find the repo root by walking upward until requirements.txt or data/ is found."""
+    app_file = Path(__file__).resolve()
+    for candidate in [app_file.parent, *app_file.parents]:
+        if (candidate / "requirements.txt").exists() or (candidate / "data").exists():
+            return candidate
+    return app_file.parent.parent
+
+
+def get_sample_account_paths() -> list[Path]:
+    """Return bundled sample account CSVs from data/random_account_exports."""
+    candidate_dirs = [
+        get_repo_root() / "data" / "random_account_exports",
+        Path.cwd() / "data" / "random_account_exports",
+        Path.cwd().parent / "data" / "random_account_exports",
+    ]
+
+    for directory in candidate_dirs:
+        if directory.exists():
+            return sorted(directory.glob("*.csv"))
+
+    return []
+
+
+def format_sample_account_label(path: Path) -> str:
+    label = path.stem
+    label = re.sub(r"^account_", "Account ", label)
+    label = re.sub(r"_historical_matter_evidence$", "", label)
+    label = label.replace("_", " ")
+    return label.title()
+
+
+@st.cache_data(show_spinner=False)
+def load_sample_csv(sample_path: str) -> pd.DataFrame:
+    return pd.read_csv(sample_path)
+
+
 @st.cache_data(show_spinner=False)
 def load_template_taxonomy_labels() -> list[str]:
     guideline_path, category_path = get_template_paths()
@@ -1280,7 +1318,8 @@ def create_project_clusters(
         empty_summary_cols = [cluster_col, label_col, "matter_count", "total_billing", "avg_billing", "top_terms", "top_bigrams", "example_matter_names"]
         return pd.DataFrame(columns=empty_summary_cols), pd.DataFrame()
 
-    n_usable = working[matter_name_col].nunique()
+    count_col = "matter_id_for_count" if "matter_id_for_count" in working.columns else matter_name_col
+    n_usable = working[count_col].nunique()
 
     if cluster_prefix == "subcluster":
         unique_signature_count = working["project_signature"].nunique(dropna=True)
@@ -1299,8 +1338,10 @@ def create_project_clusters(
         template_signal_weights = compute_template_signal_idf(template_category_keywords)
         working = assign_template_seed_categories(working, template_category_keywords, template_signal_weights)
         seeded_category_count = working["seed_template_category"].nunique(dropna=True)
+        candidate_ks = get_candidate_k_values(n_usable)
 
-        candidate_ks = get_candidate_k_values(len(working))
+        # Removed premature expansion with keyword diversity here.
+
         if not candidate_ks:
             k_selected = 1
             k_selection_results = pd.DataFrame()
@@ -1309,9 +1350,9 @@ def create_project_clusters(
             candidate_ks = expand_candidate_ks_with_keyword_diversity(
                 candidate_ks,
                 keyword_diversity["estimated_project_signal_count"],
-                len(working),
+                n_usable,
             )
-            candidate_ks = expand_candidate_ks_with_seeded_categories(candidate_ks, seeded_category_count, len(working))
+            candidate_ks = expand_candidate_ks_with_seeded_categories(candidate_ks, seeded_category_count, n_usable)
 
     if progress_bar is not None:
         progress_bar.progress(20)
@@ -1357,7 +1398,7 @@ def create_project_clusters(
                 k_selection_results,
                 fallback_k=k_selected,
                 keyword_signal_count=keyword_diversity["estimated_project_signal_count"],
-                n_usable_matters=len(working),
+                n_usable_matters=n_usable,
                 seeded_category_count=seeded_category_count,
             )
 
@@ -1428,7 +1469,7 @@ def create_project_clusters(
             cluster_col: cluster_id,
             label_col: project_name,
             "display_label": display_label,
-            "matter_count": cluster_df[matter_name_col].nunique(),
+            "matter_count": cluster_df[count_col].nunique(),
             "total_billing": numeric_billing.sum(),
             "avg_billing": numeric_billing.mean(),
             "top_terms": ", ".join(top_terms),
@@ -1659,15 +1700,24 @@ def get_subproject_tones(base_color: str, n: int) -> list[str]:
 
 
 def aggregate_project_categories(cluster_summary: pd.DataFrame) -> pd.DataFrame:
-    return (
+    project_summary = (
         cluster_summary.groupby("project_name", as_index=False)
         .agg(
             total_matters=("matter_count", "sum"),
             total_billing=("total_billing", "sum"),
-            avg_billing=("avg_billing", "mean"),
             n_clusters=("cluster_id", "nunique"),
         )
-        .sort_values(["total_matters", "total_billing"], ascending=[False, False])
+    )
+
+    project_summary["avg_billing"] = np.where(
+        project_summary["total_matters"] > 0,
+        project_summary["total_billing"] / project_summary["total_matters"],
+        0,
+    )
+
+    return project_summary.sort_values(
+        ["total_matters", "total_billing"],
+        ascending=[False, False],
     )
 
 
@@ -2034,6 +2084,7 @@ def strip_project_option_label(option_label: str) -> str:
     return option_label.replace(" *", "")
 
 
+
 st.markdown(
     """
     <div class="hero-card">
@@ -2044,19 +2095,34 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-uploaded_file = st.file_uploader(
-    "Upload CSV file",
-    type=["csv"],
-    help="Expected structure: one row per matter, similar to historical_matter_evidence, filtered to one account.",
-)
+sample_paths = get_sample_account_paths()
+sample_options = {format_sample_account_label(path): str(path) for path in sample_paths}
 
-if uploaded_file is None:
+input_cols = st.columns((1.25, 1))
+
+with input_cols[0]:
+    uploaded_file = st.file_uploader(
+        "Upload CSV file",
+        type=["csv"],
+        help="Expected structure: one row per matter, similar to historical_matter_evidence, filtered to one account.",
+    )
+
+with input_cols[1]:
+    selected_sample_label = st.selectbox(
+        "Or use a sample account",
+        options=["None"] + list(sample_options.keys()),
+        index=0,
+        help="Bundled sample accounts are loaded from data/random_account_exports/.",
+    )
+
+if uploaded_file is None and selected_sample_label == "None":
     st.markdown(
         """
         <div class="section-card">
             <h3>Expected input</h3>
             <p class="small-muted">
-                Upload a CSV with one account only. The app will infer the account, matter, date, and billing columns,
+                Upload a CSV with one account only, or choose one of the bundled sample accounts.
+                The app will infer the account, matter, date, and billing columns,
                 then show a quick historical overview before categorization begins.
             </p>
         </div>
@@ -2066,7 +2132,12 @@ if uploaded_file is None:
     st.stop()
 
 try:
-    raw_df = load_csv(uploaded_file)
+    if uploaded_file is not None:
+        raw_df = load_csv(uploaded_file)
+        data_source_label = "Uploaded file"
+    else:
+        raw_df = load_sample_csv(sample_options[selected_sample_label])
+        data_source_label = selected_sample_label
 except Exception as exc:
     st.error(f"Could not read the CSV file. Error: {exc}")
     st.stop()
@@ -2112,6 +2183,17 @@ if len(account_names) > 1:
     )
 
 number_of_matters = matter_df[matter_col].nunique()
+
+analysis_data_warning = number_of_matters < 120
+
+
+def render_low_data_warning() -> None:
+    if analysis_data_warning:
+        st.warning(
+            f"Not enough data for strong analysis: this account has {number_of_matters:,.0f} matters. "
+            "Use the clustering output as directional, not definitive. A stronger analysis usually needs at least 120 matters."
+        )
+        
 total_billing = matter_df[billing_col].sum()
 average_billing = matter_df[billing_col].mean()
 
@@ -2128,6 +2210,7 @@ overview_tab, clustering_tab = st.tabs(["Initial Overview", "Cluster Analysis"])
 with overview_tab:
     st.markdown(f"### {account_name}")
     st.caption(f"Date range: {date_range_label}")
+    st.caption(f"Data source: {data_source_label}")
     st.markdown(
         """
         <div class="section-card">
@@ -2190,6 +2273,7 @@ with overview_tab:
 with clustering_tab:
     st.markdown("### Cluster Analysis")
     st.caption("Run a quick matter-name clustering pass, then inspect the main clusters and optional subclusters.")
+    render_low_data_warning()
 
     control_cols = st.columns((1.2, 1, 1))
     with control_cols[0]:
@@ -2239,12 +2323,25 @@ with clustering_tab:
     cluster_summary = st.session_state["cluster_summary"]
     clustered_matters = st.session_state["clustered_matters"]
 
+    actual_clustered_count = (
+        clustered_matters["matter_id_for_count"].nunique()
+        if "matter_id_for_count" in clustered_matters.columns
+        else len(clustered_matters)
+    )
+
+    # Check actual clustered matter count and show warning if low
+    if actual_clustered_count < 120:
+        st.warning(
+            f"⚠️ Limited clustering data: only {actual_clustered_count:,.0f} matters passed clustering filters (out of {number_of_matters:,.0f} total uploaded). "
+            "Use these results as directional guidance only. Strong analysis typically requires at least 120 usable matters."
+        )
+
     project_summary = aggregate_project_categories(cluster_summary)
     top_project_names = project_summary.head(3)["project_name"].tolist()
     project_color_map = get_project_color_map(top_project_names)
 
     subproject_candidate_projects = set(
-        clustered_matters.groupby("project_name")[matter_name_col]
+        clustered_matters.groupby("project_name")["matter_id_for_count"]
         .nunique()
         .loc[lambda s: s >= 50]
         .index
@@ -2282,7 +2379,7 @@ with clustering_tab:
     selected_cluster_df = clustered_matters[clustered_matters["project_name"] == selected_project].copy()
     selected_project_color = project_color_map.get(selected_project, ALTFEE_GRAY)
 
-    selected_cluster_size = selected_cluster_df[matter_name_col].nunique()
+    selected_cluster_size = selected_cluster_df["matter_id_for_count"].nunique()
     subcluster_text_source = time_entry_text_col if time_entry_text_col else matter_name_col
 
     if "subclusters_by_cluster" not in st.session_state:
