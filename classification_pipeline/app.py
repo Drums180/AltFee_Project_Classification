@@ -745,9 +745,110 @@ def format_sample_account_label(path: Path) -> str:
     return label.title()
 
 
+
 @st.cache_data(show_spinner=False)
 def load_sample_csv(sample_path: str) -> pd.DataFrame:
     return pd.read_csv(sample_path)
+
+
+# === Folio Practice Area Classification ===
+
+def get_folio_practice_area_path() -> Path | None:
+    candidate_paths = [
+        get_repo_root() / "data" / "practice_areas" / "folio_practice_areas.csv",
+        Path.cwd() / "data" / "practice_areas" / "folio_practice_areas.csv",
+        Path.cwd().parent / "data" / "practice_areas" / "folio_practice_areas.csv",
+    ]
+
+    for path in candidate_paths:
+        if path.exists():
+            return path
+
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def load_folio_practice_areas() -> list[str]:
+    path = get_folio_practice_area_path()
+    if path is None:
+        return []
+
+    try:
+        practice_area_df = pd.read_csv(path)
+    except Exception:
+        return []
+
+    practice_area_df.columns = [clean_column_name(col) for col in practice_area_df.columns]
+
+    name_candidates = ["name", "practice_area", "practice_area_name", "area", "label"]
+    name_col = find_column(practice_area_df, name_candidates)
+    if name_col is None:
+        name_col = practice_area_df.columns[0]
+
+    labels = (
+        practice_area_df[name_col]
+        .dropna()
+        .astype(str)
+        .map(str.strip)
+        .loc[lambda s: s != ""]
+        .drop_duplicates()
+        .tolist()
+    )
+
+    return sorted(labels)
+
+
+@st.cache_resource(show_spinner=False)
+def get_zero_shot_classifier():
+    from transformers import pipeline
+    return pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
+
+
+def build_practice_area_classification_text(row: pd.Series) -> str:
+    return (
+        f"Project name: {row.get('project_name', '')}\n"
+        f"Top terms: {row.get('top_terms', '')}\n"
+        f"Top phrases: {row.get('top_bigrams', '')}\n"
+        f"Example matters: {row.get('example_matter_names', '')}"
+    )
+
+
+def classify_clusters_to_practice_areas(cluster_summary: pd.DataFrame, candidate_labels: list[str]) -> pd.DataFrame:
+    if cluster_summary.empty or not candidate_labels:
+        cluster_summary = cluster_summary.copy()
+        cluster_summary["predicted_practice_area"] = "Unclassified"
+        cluster_summary["practice_area_score"] = np.nan
+        return cluster_summary
+
+    cluster_summary = cluster_summary.copy()
+
+    try:
+        classifier = get_zero_shot_classifier()
+    except Exception as exc:
+        st.warning(
+            "Practice-area classification could not run because the Hugging Face zero-shot model is unavailable. "
+            f"Install transformers/torch or disable this option. Error: {exc}"
+        )
+        cluster_summary["predicted_practice_area"] = "Unclassified"
+        cluster_summary["practice_area_score"] = np.nan
+        return cluster_summary
+
+    predicted_areas = []
+    scores = []
+
+    for _, row in cluster_summary.iterrows():
+        text = build_practice_area_classification_text(row)
+        try:
+            result = classifier(text, candidate_labels, multi_label=False)
+            predicted_areas.append(result["labels"][0])
+            scores.append(float(result["scores"][0]))
+        except Exception:
+            predicted_areas.append("Unclassified")
+            scores.append(np.nan)
+
+    cluster_summary["predicted_practice_area"] = predicted_areas
+    cluster_summary["practice_area_score"] = scores
+    return cluster_summary
 
 
 @st.cache_data(show_spinner=False)
@@ -1719,14 +1820,22 @@ def get_subproject_tones(base_color: str, n: int) -> list[str]:
 
 
 def aggregate_project_categories(cluster_summary: pd.DataFrame) -> pd.DataFrame:
-    project_summary = (
-        cluster_summary.groupby("project_name", as_index=False)
-        .agg(
-            total_matters=("matter_count", "sum"),
-            total_billing=("total_billing", "sum"),
-            n_clusters=("cluster_id", "nunique"),
+    agg_spec = {
+        "total_matters": ("matter_count", "sum"),
+        "total_billing": ("total_billing", "sum"),
+        "n_clusters": ("cluster_id", "nunique"),
+    }
+
+    if "predicted_practice_area" in cluster_summary.columns:
+        agg_spec["predicted_practice_area"] = (
+            "predicted_practice_area",
+            lambda s: s.dropna().mode().iloc[0] if not s.dropna().empty else "Unclassified",
         )
-    )
+
+    if "practice_area_score" in cluster_summary.columns:
+        agg_spec["practice_area_score"] = ("practice_area_score", "max")
+
+    project_summary = cluster_summary.groupby("project_name", as_index=False).agg(**agg_spec)
 
     project_summary["avg_billing"] = np.where(
         project_summary["total_matters"] > 0,
@@ -2315,7 +2424,9 @@ with clustering_tab:
     st.caption("Run a quick matter-name clustering pass, then inspect the main clusters and optional subclusters.")
     render_low_data_warning()
 
-    control_cols = st.columns((1.2, 1, 1))
+    folio_practice_areas = load_folio_practice_areas()
+
+    control_cols = st.columns((1.15, 1.15, 0.9, 1))
     with control_cols[0]:
         use_ai = st.toggle(
             "Use AI labels with Ollama",
@@ -2323,9 +2434,19 @@ with clustering_tab:
             help="When enabled, the app asks local Ollama to name each cluster. If Ollama fails, it falls back to TF-IDF terms.",
         )
     with control_cols[1]:
-        run_clustering = st.button("Run cluster analysis", type="primary")
+        classify_practice_areas = st.toggle(
+            "Classify practice areas",
+            value=bool(folio_practice_areas),
+            disabled=not bool(folio_practice_areas),
+            help="Uses the FOLIO practice area CSV and Hugging Face zero-shot classification to assign each project cluster to a broad practice area.",
+        )
     with control_cols[2]:
-        st.caption("Subclusters become available after a cluster is selected.")
+        run_clustering = st.button("Run cluster analysis", type="primary")
+    with control_cols[3]:
+        if folio_practice_areas:
+            st.caption(f"Loaded {len(folio_practice_areas):,.0f} FOLIO practice areas.")
+        else:
+            st.caption("No FOLIO practice area CSV found.")
 
     if use_ai:
         st.info("AI labeling requires Ollama running locally at http://localhost:11434 and the llama3.1:8b model pulled.")
@@ -2351,10 +2472,22 @@ with clustering_tab:
         if cluster_summary.empty:
             st.error("No clusters could be created. Check that the file has usable matter names.")
         else:
+            if classify_practice_areas:
+                with st.spinner("Classifying project clusters into FOLIO practice areas..."):
+                    cluster_summary = classify_clusters_to_practice_areas(cluster_summary, folio_practice_areas)
+
             clustered_matters = add_numeric_columns(clustered_matters, billing_col, hours_col, rate_col, entries_col, users_col)
+
+            if "predicted_practice_area" in cluster_summary.columns:
+                practice_area_lookup = cluster_summary.set_index("cluster_id")["predicted_practice_area"].to_dict()
+                clustered_matters["predicted_practice_area"] = (
+                    clustered_matters["cluster_id"].map(practice_area_lookup).fillna("Unclassified")
+                )
+
             st.session_state["cluster_summary"] = cluster_summary
             st.session_state["clustered_matters"] = clustered_matters
             st.session_state["use_ai"] = use_ai
+            st.session_state["classify_practice_areas"] = classify_practice_areas
 
     if "cluster_summary" not in st.session_state or "clustered_matters" not in st.session_state:
         st.info("Run the cluster analysis to see project names, charts, and cluster details.")
@@ -2398,7 +2531,7 @@ with clustering_tab:
 
     st.markdown("### Project Detail")
 
-    detail_controls = st.columns((1.3, 1.3, 0.8))
+    detail_controls = st.columns((1.1, 1.2, 1.2, 0.8))
 
     project_options_df = project_summary.copy()
     project_options_df["has_subprojects"] = project_options_df["project_name"].isin(subproject_candidate_projects)
@@ -2407,7 +2540,36 @@ with clustering_tab:
         axis=1,
     )
 
+    if "predicted_practice_area" in project_options_df.columns:
+        practice_area_options = ["All Practice Areas"] + (
+            project_options_df["predicted_practice_area"]
+            .dropna()
+            .astype(str)
+            .drop_duplicates()
+            .sort_values()
+            .tolist()
+        )
+    else:
+        practice_area_options = ["All Practice Areas"]
+
     with detail_controls[0]:
+        selected_practice_area = st.selectbox(
+            "Practice Area",
+            options=practice_area_options,
+            index=0,
+            key="practice_area_detail_selector",
+        )
+
+    if selected_practice_area != "All Practice Areas" and "predicted_practice_area" in project_options_df.columns:
+        project_options_df = project_options_df[
+            project_options_df["predicted_practice_area"] == selected_practice_area
+        ].copy()
+
+    if project_options_df.empty:
+        st.warning("No projects available for the selected practice area.")
+        st.stop()
+
+    with detail_controls[1]:
         selected_project_option = st.selectbox(
             "Project",
             options=project_options_df["option_label"].tolist(),
@@ -2418,6 +2580,19 @@ with clustering_tab:
     selected_project = strip_project_option_label(selected_project_option)
     selected_cluster_df = clustered_matters[clustered_matters["project_name"] == selected_project].copy()
     selected_project_color = project_color_map.get(selected_project, ALTFEE_GRAY)
+
+    if "predicted_practice_area" in project_summary.columns:
+        selected_practice_area_value = (
+            project_summary.loc[
+                project_summary["project_name"] == selected_project,
+                "predicted_practice_area",
+            ]
+            .dropna()
+            .astype(str)
+            .head(1)
+        )
+        if not selected_practice_area_value.empty:
+            st.caption(f"Practice area: {selected_practice_area_value.iloc[0]}")
 
     selected_cluster_size = selected_cluster_df["matter_id_for_count"].nunique()
     subcluster_text_source = time_entry_text_col if time_entry_text_col else matter_name_col
@@ -2471,7 +2646,7 @@ with clustering_tab:
         )
         active_subclustered_matters["subcluster_name"] = active_subclustered_matters["subcluster_name"].map(clean_subproject_display_name)
 
-    with detail_controls[1]:
+    with detail_controls[2]:
         if active_subcluster_summary is not None and not active_subcluster_summary.empty:
             sub_options = ["All sub-projects"] + active_subcluster_summary["subcluster_name"].drop_duplicates().tolist()
             selected_subproject = st.selectbox(
@@ -2491,7 +2666,7 @@ with clustering_tab:
                 key=f"subproject_selector_disabled_{clean_column_name(selected_project)}",
             )
 
-    with detail_controls[2]:
+    with detail_controls[3]:
         detail_granularity = st.radio(
             "Time",
             options=["Monthly", "Yearly"],

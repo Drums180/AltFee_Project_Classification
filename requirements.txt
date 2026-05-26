@@ -4,3 +4,5 @@ numpy
 plotly
 requests
 scikit-learn
+transformers
+torch
