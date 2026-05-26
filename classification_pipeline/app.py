@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from collections import Counter
+from difflib import SequenceMatcher
 from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
@@ -1693,6 +1694,440 @@ def create_project_clusters(
     return cluster_summary, working
 
 
+FOLIO_PUBLIC_API_DEFAULT = "https://folio.openlegalstandard.org"
+FOLIO_TOP_CANDIDATES = 3
+
+
+def safe_string(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def build_folio_query_text(matter_name: object, practice_area: object = "", matter_category: object = "") -> str:
+    """Build one query string per matter for public FOLIO prefix search."""
+    matter_signature = normalize_matter_name_signature(matter_name)
+    matter_fallback = normalize_legal_text_for_clustering(matter_name)
+    practice_text = normalize_legal_text_for_clustering(practice_area)
+    category_text = normalize_legal_text_for_clustering(matter_category)
+
+    parts = [
+        matter_signature or matter_fallback,
+        practice_text,
+        category_text,
+    ]
+    query = " ".join(part for part in parts if part).strip()
+    query = re.sub(r"\s+", " ", query)
+
+    if not query:
+        query = clean_text(" ".join([safe_string(matter_name), safe_string(practice_area), safe_string(matter_category)]))
+
+    return query
+
+
+def build_folio_matter_input(
+    df: pd.DataFrame,
+    matter_id_col: str,
+    matter_name_col: str,
+    practice_area_col: str | None = None,
+    matter_category_col: str | None = None,
+) -> pd.DataFrame:
+    """Create one public-FOLIO query row per original matter row."""
+    working = df.copy()
+
+    folio_input = pd.DataFrame({
+        "matter_id": working[matter_id_col].astype(str),
+        "matter_name": working[matter_name_col].fillna("").astype(str),
+    })
+
+    if practice_area_col and practice_area_col in working.columns:
+        folio_input["practice_area"] = working[practice_area_col].fillna("").astype(str)
+    else:
+        folio_input["practice_area"] = ""
+
+    if matter_category_col and matter_category_col in working.columns:
+        folio_input["matter_category"] = working[matter_category_col].fillna("").astype(str)
+    else:
+        folio_input["matter_category"] = ""
+
+    folio_input["folio_query_text"] = folio_input.apply(
+        lambda row: build_folio_query_text(
+            row["matter_name"],
+            row["practice_area"],
+            row["matter_category"],
+        ),
+        axis=1,
+    )
+
+    folio_input = folio_input[folio_input["folio_query_text"].astype(str).str.len() > 0].copy()
+    return folio_input.reset_index(drop=True)
+
+
+def normalize_folio_api_base_url(api_base_url: str) -> str:
+    api_base_url = safe_string(api_base_url) or FOLIO_PUBLIC_API_DEFAULT
+    return api_base_url.rstrip("/")
+
+
+def search_public_folio_api_uncached(api_base_url: str, query: str) -> dict:
+    api_base_url = normalize_folio_api_base_url(api_base_url)
+    response = requests.get(
+        f"{api_base_url}/search/prefix",
+        params={"query": query},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+@st.cache_data(show_spinner=False, ttl=24 * 60 * 60)
+def search_public_folio_api_cached(api_base_url: str, query: str) -> dict:
+    return search_public_folio_api_uncached(api_base_url, query)
+
+
+def search_public_folio_api(api_base_url: str, query: str, use_cache: bool = True) -> dict:
+    if use_cache:
+        return search_public_folio_api_cached(api_base_url, query)
+    return search_public_folio_api_uncached(api_base_url, query)
+
+
+def check_public_folio_api(api_base_url: str) -> tuple[bool, str]:
+    try:
+        response_json = search_public_folio_api_uncached(api_base_url, "contract")
+    except Exception as exc:
+        return False, f"FOLIO API is not reachable: {str(exc)[:160]}"
+
+    if isinstance(response_json, dict) and "classes" in response_json:
+        return True, "FOLIO public API is reachable."
+
+    return False, "FOLIO API responded, but the response did not include a 'classes' key."
+
+
+def extract_folio_candidates(response_json: dict, max_candidates: int = FOLIO_TOP_CANDIDATES) -> list[dict]:
+    if not isinstance(response_json, dict):
+        return []
+
+    classes = response_json.get("classes", [])
+    if not isinstance(classes, list):
+        return []
+
+    candidates = []
+    for candidate in classes[:max_candidates]:
+        if not isinstance(candidate, dict):
+            continue
+
+        alternative_labels = candidate.get("alternative_labels") or []
+        if not isinstance(alternative_labels, list):
+            alternative_labels = [str(alternative_labels)]
+
+        parent_class_of = candidate.get("parent_class_of") or []
+        sub_class_of = candidate.get("sub_class_of") or []
+
+        candidates.append({
+            "folio_label": candidate.get("preferred_label") or candidate.get("label"),
+            "folio_raw_label": candidate.get("label"),
+            "folio_iri": candidate.get("iri"),
+            "folio_definition": candidate.get("definition"),
+            "folio_deprecated": bool(candidate.get("deprecated", False)),
+            "folio_alternative_labels": alternative_labels,
+            "folio_parent_count": len(parent_class_of) if isinstance(parent_class_of, list) else 0,
+            "folio_subclass_count": len(sub_class_of) if isinstance(sub_class_of, list) else 0,
+            "raw_candidate": candidate,
+        })
+
+    return candidates
+
+
+def similarity_score(left: object, right: object) -> float:
+    left_text = normalize_legal_text_for_clustering(left)
+    right_text = normalize_legal_text_for_clustering(right)
+
+    if not left_text or not right_text:
+        return 0.0
+
+    sequence_score = SequenceMatcher(None, left_text, right_text).ratio() * 100
+    left_tokens = set(left_text.split())
+    right_tokens = set(right_text.split())
+    token_score = 0.0
+
+    if left_tokens and right_tokens:
+        token_score = len(left_tokens.intersection(right_tokens)) / len(left_tokens.union(right_tokens)) * 100
+
+    return max(sequence_score, token_score)
+
+
+def score_folio_candidate(query: str, candidate: dict) -> float:
+    label_score = similarity_score(query, candidate.get("folio_label"))
+    raw_label_score = similarity_score(query, candidate.get("folio_raw_label"))
+
+    alternative_scores = [
+        similarity_score(query, alternative_label)
+        for alternative_label in candidate.get("folio_alternative_labels", [])
+    ]
+    best_alternative_score = max(alternative_scores) if alternative_scores else 0.0
+
+    definition_score = similarity_score(query, candidate.get("folio_definition")) * 0.45
+
+    score = max(
+        label_score,
+        raw_label_score,
+        best_alternative_score * 0.95,
+        definition_score,
+    )
+
+    if candidate.get("folio_deprecated"):
+        score -= 20
+
+    return round(max(score, 0.0), 2)
+
+
+def flatten_folio_mapping_row(input_row: pd.Series, candidates: list[dict], status: str, error_message: str | None = None) -> dict:
+    output = {
+        "matter_id": input_row.get("matter_id"),
+        "matter_name": input_row.get("matter_name"),
+        "practice_area": input_row.get("practice_area"),
+        "matter_category": input_row.get("matter_category"),
+        "folio_query_text": input_row.get("folio_query_text"),
+        "folio_status": status,
+        "best_folio_label": None,
+        "best_folio_definition": None,
+        "best_folio_score": None,
+        "best_folio_iri": None,
+        "folio_candidates_json": json.dumps([candidate.get("raw_candidate", candidate) for candidate in candidates]),
+    }
+
+    if error_message:
+        output["folio_error"] = error_message
+
+    scored_candidates = []
+    for candidate in candidates:
+        candidate = candidate.copy()
+        candidate["folio_score"] = score_folio_candidate(input_row.get("folio_query_text", ""), candidate)
+        scored_candidates.append(candidate)
+
+    scored_candidates = sorted(scored_candidates, key=lambda candidate: candidate.get("folio_score", 0), reverse=True)
+
+    if scored_candidates:
+        best = scored_candidates[0]
+        output.update({
+            "best_folio_label": best.get("folio_label"),
+            "best_folio_definition": best.get("folio_definition"),
+            "best_folio_score": best.get("folio_score"),
+            "best_folio_iri": best.get("folio_iri"),
+        })
+
+    for index in range(FOLIO_TOP_CANDIDATES):
+        candidate_number = index + 1
+        if index < len(scored_candidates):
+            candidate = scored_candidates[index]
+            output[f"candidate_{candidate_number}_label"] = candidate.get("folio_label")
+            output[f"candidate_{candidate_number}_definition"] = candidate.get("folio_definition")
+            output[f"candidate_{candidate_number}_score"] = candidate.get("folio_score")
+            output[f"candidate_{candidate_number}_iri"] = candidate.get("folio_iri")
+        else:
+            output[f"candidate_{candidate_number}_label"] = None
+            output[f"candidate_{candidate_number}_definition"] = None
+            output[f"candidate_{candidate_number}_score"] = None
+            output[f"candidate_{candidate_number}_iri"] = None
+
+    return output
+
+
+def map_folio_matter_rows(
+    folio_input: pd.DataFrame,
+    api_base_url: str,
+    number_of_rows: int,
+    use_cache: bool = True,
+    progress_bar=None,
+) -> pd.DataFrame:
+    rows = []
+    selected_input = folio_input.head(number_of_rows).copy()
+
+    for index, (_, input_row) in enumerate(selected_input.iterrows(), 1):
+        query = safe_string(input_row.get("folio_query_text"))
+
+        try:
+            response_json = search_public_folio_api(api_base_url, query, use_cache=use_cache)
+            candidates = extract_folio_candidates(response_json, max_candidates=FOLIO_TOP_CANDIDATES)
+            status = "candidate_found" if candidates else "no_candidates"
+            rows.append(flatten_folio_mapping_row(input_row, candidates, status=status))
+        except Exception as exc:
+            rows.append(flatten_folio_mapping_row(
+                input_row,
+                candidates=[],
+                status="error",
+                error_message=str(exc)[:160],
+            ))
+
+        if progress_bar is not None:
+            progress_bar.progress(min(index / max(len(selected_input), 1), 1.0))
+
+    return pd.DataFrame(rows)
+
+
+def render_folio_mapper_tab(
+    matter_df: pd.DataFrame,
+    matter_col: str,
+    matter_name_col: str,
+    practice_area_col: str | None,
+    matter_category_col: str | None,
+) -> None:
+    st.markdown("### FOLIO Mapper")
+    st.caption("Explore whether the public FOLIO ontology API can map matter-level text into FOLIO concepts.")
+
+    st.info(
+        "This tab sends cleaned matter-level text to the public FOLIO ontology API and shows the top returned concepts. "
+        "It does not use the full FOLIO Mapper LLM pipeline."
+    )
+    st.warning(
+        "This is an exploratory mapping test. Results may be weak because the public API is prefix-search based, not a full semantic mapper."
+    )
+
+    api_base_url = st.text_input(
+        "FOLIO public API base URL",
+        value=FOLIO_PUBLIC_API_DEFAULT,
+        key="folio_public_api_base_url",
+    )
+    api_base_url = normalize_folio_api_base_url(api_base_url)
+
+    api_ok, api_message = check_public_folio_api(api_base_url)
+    if api_ok:
+        st.success(api_message)
+    else:
+        st.error(api_message)
+
+    folio_input = build_folio_matter_input(
+        matter_df,
+        matter_id_col=matter_col,
+        matter_name_col=matter_name_col,
+        practice_area_col=practice_area_col,
+        matter_category_col=matter_category_col,
+    )
+
+    st.write(f"Available matter rows for FOLIO testing: {len(folio_input):,}")
+
+    with st.expander("Preview FOLIO input rows", expanded=True):
+        st.dataframe(folio_input.head(50), use_container_width=True, hide_index=True)
+
+    if folio_input.empty:
+        st.warning("No usable matter rows were available for FOLIO mapping.")
+        return
+
+    st.download_button(
+        "Download FOLIO input CSV",
+        data=folio_input.to_csv(index=False).encode("utf-8"),
+        file_name="folio_public_api_input.csv",
+        mime="text/csv",
+    )
+
+    max_rows = min(1000, len(folio_input))
+    default_rows = min(100, max_rows)
+
+    control_cols = st.columns((1, 1, 1))
+    with control_cols[0]:
+        number_of_rows = st.slider(
+            "Number of matters to map",
+            min_value=min(10, max_rows),
+            max_value=max_rows,
+            value=default_rows,
+            step=10 if max_rows >= 100 else 1,
+            key="folio_number_of_rows",
+        )
+    with control_cols[1]:
+        st.metric("Top candidates per matter", FOLIO_TOP_CANDIDATES)
+    with control_cols[2]:
+        use_cache = st.toggle(
+            "Cache repeated API queries",
+            value=True,
+            key="folio_use_cache",
+        )
+
+    if st.button("Map matters to FOLIO", type="primary", key="run_folio_mapping"):
+        progress_bar = st.progress(0)
+        with st.spinner("Mapping matter rows to public FOLIO candidates..."):
+            folio_results = map_folio_matter_rows(
+                folio_input,
+                api_base_url=api_base_url,
+                number_of_rows=number_of_rows,
+                use_cache=use_cache,
+                progress_bar=progress_bar,
+            )
+        st.session_state["folio_public_api_results"] = folio_results
+
+    if "folio_public_api_results" not in st.session_state:
+        st.info("Click 'Map matters to FOLIO' to test the public API on the selected sample.")
+        return
+
+    folio_results = st.session_state["folio_public_api_results"].copy()
+
+    tested_count = len(folio_results)
+    candidate_count = int((folio_results["folio_status"] == "candidate_found").sum()) if "folio_status" in folio_results.columns else 0
+    no_candidate_count = int((folio_results["folio_status"] == "no_candidates").sum()) if "folio_status" in folio_results.columns else 0
+    avg_score = pd.to_numeric(folio_results.get("best_folio_score"), errors="coerce").mean()
+
+    metric_cols = st.columns(4)
+    with metric_cols[0]:
+        render_metric_card("Matters tested", format_number(tested_count), "Rows sent to FOLIO")
+    with metric_cols[1]:
+        render_metric_card("With candidates", format_number(candidate_count), "Returned at least one class")
+    with metric_cols[2]:
+        render_metric_card("No candidates", format_number(no_candidate_count), "No class returned")
+    with metric_cols[3]:
+        score_label = "N/A" if pd.isna(avg_score) else f"{avg_score:.1f}"
+        render_metric_card("Avg. best score", score_label, "Local fuzzy score")
+
+    visible_columns = [
+        "matter_name",
+        "best_folio_label",
+        "best_folio_definition",
+        "best_folio_score",
+    ]
+    st.markdown("#### Best FOLIO candidate per matter")
+    st.dataframe(folio_results[visible_columns], use_container_width=True, hide_index=True)
+
+    expanded_columns = [
+        "matter_id",
+        "matter_name",
+        "practice_area",
+        "matter_category",
+        "folio_query_text",
+        "folio_status",
+        "best_folio_label",
+        "best_folio_definition",
+        "best_folio_score",
+        "best_folio_iri",
+        "candidate_1_label",
+        "candidate_1_score",
+        "candidate_2_label",
+        "candidate_2_score",
+        "candidate_3_label",
+        "candidate_3_score",
+    ]
+    expanded_columns = [column for column in expanded_columns if column in folio_results.columns]
+
+    with st.expander("Top 3 candidate details"):
+        st.dataframe(folio_results[expanded_columns], use_container_width=True, hide_index=True)
+
+    if "best_folio_label" in folio_results.columns:
+        top_labels = (
+            folio_results["best_folio_label"]
+            .dropna()
+            .astype(str)
+            .value_counts()
+            .head(15)
+            .reset_index()
+        )
+        top_labels.columns = ["best_folio_label", "matter_count"]
+        with st.expander("Top returned FOLIO labels"):
+            st.dataframe(top_labels, use_container_width=True, hide_index=True)
+
+    st.download_button(
+        "Download FOLIO mapping results CSV",
+        data=folio_results.to_csv(index=False).encode("utf-8"),
+        file_name="folio_public_api_mapping_results.csv",
+        mime="text/csv",
+    )
+
+
 def add_numeric_columns(df: pd.DataFrame, billing_col: str, hours_col: str | None, rate_col: str | None, entries_col: str | None, users_col: str | None) -> pd.DataFrame:
     working = df.copy()
     working["numeric_billing"] = pd.to_numeric(working[billing_col], errors="coerce").fillna(0)
@@ -2653,7 +3088,7 @@ else:
 
 default_granularity = choose_default_granularity(matter_df["parsed_date"])
 
-overview_tab, clustering_tab = st.tabs(["Initial Overview", "Cluster Analysis"])
+overview_tab, clustering_tab, folio_tab = st.tabs(["Initial Overview", "Cluster Analysis", "FOLIO Mapper"])
 
 with overview_tab:
     st.markdown(f"### {account_name}")
@@ -2723,6 +3158,15 @@ with overview_tab:
 
     with st.expander("Preview uploaded data"):
         st.dataframe(matter_df.drop(columns=["parsed_date"], errors="ignore").head(50), use_container_width=True)
+
+with folio_tab:
+    render_folio_mapper_tab(
+        matter_df=matter_df,
+        matter_col=matter_col,
+        matter_name_col=matter_name_col,
+        practice_area_col=practice_area_col,
+        matter_category_col=matter_category_col,
+    )
 
 with clustering_tab:
     st.markdown("### Cluster Analysis")
