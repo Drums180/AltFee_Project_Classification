@@ -226,6 +226,7 @@ OPTIONAL_COLUMN_OPTIONS = {
     "n_time_entries": ["n_time_entries", "time_entries", "number_of_time_entries"],
     "n_unique_users": ["n_unique_users", "unique_users", "number_of_users"],
     "practice_area": ["practice_area", "area_of_law", "matter_practice_area"],
+    "matter_category": ["matter_category", "category", "matter_type", "clio_category", "project_category"],
     "all_time_entry_text": ["all_time_entry_text", "activity_text", "activity_text_description", "time_entry_text"],
 }
 
@@ -440,9 +441,10 @@ BASE_LEGAL_SERVICE_KEYWORDS = {
     "incorporation", "incorporate", "corporate", "corporation", "company", "business", "shareholder", "shareholders",
     "estate", "probate", "will", "wills", "trust", "trusts", "poa", "power", "attorney", "representation",
     "litigation", "dispute", "claim", "claims", "settlement", "court", "motion", "pleading", "pleadings",
-    "employment", "employee", "employer", "termination", "severance", "immigration", "visa", "permit",
+    "employment", "employee", "employer", "termination", "severance", "dismissal", "constructive", "wrongful",
+    "harassment", "discrimination", "retaliation", "workplace", "labour", "labor", "immigration", "visa", "permit",
     "trademark", "copyright", "ip", "intellectual", "property", "real", "transaction", "purchase", "sale",
-    "family", "divorce", "separation", "custody", "support", "tax", "planning", "financing", "loan",
+    "family", "divorce", "separation", "custody", "parenting", "access", "support", "tax", "planning", "financing", "loan",
     "privacy", "policy", "terms", "service", "licensing", "license", "review", "advisory", "compliance",
 }
 
@@ -512,8 +514,20 @@ def apply_legal_phrase_normalization(text: str) -> str:
         "real estate": "real estate",
         "estate planning": "estate planning",
         "commercial lease": "commercial lease",
+        "dissolution of marriage": "divorce",
+        "marriage dissolution": "divorce",
+        "dissolution with children": "divorce with children",
+        "dissolution with child": "divorce with children",
+        "dissolution no kids": "divorce no children",
+        "dissolution no children": "divorce no children",
+        "dissolution without children": "divorce no children",
     }
     clean = clean_text(text)
+    clean = re.sub(r"\bx\s+do\s+not\s+use\b", " ", clean)
+    clean = re.sub(r"\bdo\s+not\s+use\b", " ", clean)
+    clean = re.sub(r"\bee\b", " employee ", clean)
+    clean = re.sub(r"\ber\b", " employer ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
     for source, target in replacements.items():
         clean = clean.replace(source, target)
     return clean
@@ -554,6 +568,11 @@ def normalize_matter_name_signature(value: object) -> str:
     text = re.sub(r"[-_/|]+", " ", text)
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\bx\s+do\s+not\s+use\b", " ", text)
+    text = re.sub(r"\bdo\s+not\s+use\b", " ", text)
+    text = re.sub(r"\bee\b", " employee ", text)
+    text = re.sub(r"\ber\b", " employer ", text)
+    text = re.sub(r"\s+", " ", text).strip()
 
     junk_phrases = [
         "closed", "trial billing matter", "trial billing", "billing matter",
@@ -573,6 +592,14 @@ def normalize_matter_name_signature(value: object) -> str:
         "divorce no children": "divorce no children",
         "divorce without children": "divorce no children",
         "divorce no child": "divorce no children",
+        "divorce without child": "divorce no children",
+        "divorce no kids": "divorce no children",
+        "divorce without kids": "divorce no children",
+        "dissolution no kids": "divorce no children",
+        "dissolution without kids": "divorce no children",
+        "dissolution with kids": "divorce with children",
+        "dissolution with child": "divorce with children",
+        "dissolution with children": "divorce with children",
         "contested divorce children": "contested divorce with children",
         "contested divorce with child": "contested divorce with children",
         "uncontested divorce children": "uncontested divorce with children",
@@ -674,6 +701,160 @@ def validate_cluster_label_against_examples(project_name: str, examples: pd.Seri
         return True
 
     return len(label_tokens.intersection(example_tokens)) >= min_overlap
+
+
+# --- Adaptive clustering source helpers ---
+def legal_signal_score(value: object) -> int:
+    text = "" if pd.isna(value) else str(value).lower().strip()
+    if not text:
+        return -3
+
+    normalized = normalize_legal_text_for_clustering(text)
+    tokens = remove_junk_tokens(tokenize_text(normalized))
+    token_set = set(tokens)
+
+    strong_phrases = {
+        "constructive dismissal",
+        "wrongful dismissal",
+        "termination severance",
+        "severance package",
+        "severance packages",
+        "divorce with children",
+        "divorce without children",
+        "dissolution of marriage",
+        "marriage dissolution",
+        "dissolution with children",
+        "dissolution with child",
+        "dissolution no kids",
+        "dissolution without children",
+        "child support",
+        "estate planning",
+        "asset purchase agreement",
+        "real estate purchase",
+        "commercial lease",
+        "shareholder agreement",
+        "independent contractor agreement",
+        "employment agreement",
+    }
+
+    company_markers = {
+        "inc", "llc", "ltd", "limited", "corp", "corporation",
+        "company", "holdings", "group", "pllc"
+    }
+    generic_markers = {
+        "general", "misc", "admin", "billing", "matter",
+        "file", "unknown", "untitled"
+    }
+    broad_weak_terms = {
+        "estate", "real", "corporate", "family", "business", "general"
+    }
+
+    signature = normalize_matter_name_signature(text)
+    strong_signatures = {
+        "divorce",
+        "divorce children",
+        "divorce no children",
+        "contested divorce children",
+        "uncontested divorce children",
+        "custody",
+        "child support",
+        "postjudgment",
+    }
+    score = 0
+    score += 2 * len(token_set.intersection(BASE_LEGAL_SERVICE_KEYWORDS))
+    score += 3 * sum(1 for phrase in strong_phrases if phrase in normalized or phrase in text)
+    if signature in strong_signatures:
+        score += 5
+
+    if token_set.intersection(company_markers):
+        score -= 5
+    if token_set.intersection(generic_markers):
+        score -= 2
+    if len(token_set) <= 2 and token_set.intersection(broad_weak_terms) and score < 4:
+        score -= 2
+
+    return score
+
+
+def matter_name_has_usable_legal_signal(value: object) -> bool:
+    return legal_signal_score(value) >= 2
+
+
+def build_project_clustering_source(
+    df: pd.DataFrame,
+    matter_name_col: str,
+    matter_category_col: str | None,
+    practice_area_col: str | None,
+) -> pd.DataFrame:
+    """
+    Build an adaptive clustering source.
+
+    The app should trust matter_name when it behaves like a reusable project taxonomy,
+    but fall back to matter_category + practice_area when matter_name looks like a client/company label.
+    This uses both row-level legal signal and account-level repeated-signature signal.
+    """
+    working = df.copy()
+
+    matter_series = working[matter_name_col].fillna("").astype(str)
+    category_series = (
+        working[matter_category_col].fillna("").astype(str)
+        if matter_category_col
+        else pd.Series("", index=working.index)
+    )
+    practice_series = (
+        working[practice_area_col].fillna("").astype(str)
+        if practice_area_col
+        else pd.Series("", index=working.index)
+    )
+
+    signatures = matter_series.apply(normalize_matter_name_signature)
+    signature_counts = signatures.map(signatures.value_counts()).fillna(0).astype(int)
+    total_rows = max(len(working), 1)
+    signature_share = signature_counts / total_rows
+
+    signal_scores = matter_series.apply(legal_signal_score)
+
+    company_pattern = re.compile(
+        r"\b(inc|llc|ltd|limited|corp|corporation|company|holdings|group|pllc|llp|lp|co)\b",
+        flags=re.IGNORECASE,
+    )
+    generic_pattern = re.compile(
+        r"\b(general|misc|miscellaneous|admin|billing|matter|file|unknown|untitled)\b",
+        flags=re.IGNORECASE,
+    )
+
+    looks_entity_like = matter_series.str.contains(company_pattern, na=False)
+    looks_generic = matter_series.str.contains(generic_pattern, na=False)
+
+    repeated_signature = (
+        (signature_counts >= 3) |
+        ((signature_counts >= 2) & (signature_share >= 0.05))
+    ) & signatures.astype(str).str.len().ge(3)
+
+    # Trust matter_name when either the row itself has legal signal, or the firm repeats
+    # the same normalized signature enough that it likely represents a reusable project label.
+    matter_has_signal = (signal_scores >= 2) | repeated_signature
+
+    # But do not trust obvious company/client/admin labels unless they have strong legal signal.
+    matter_has_signal = matter_has_signal & ~((looks_entity_like | looks_generic) & (signal_scores < 4))
+
+    fallback_context = (category_series + " " + practice_series).str.strip()
+    combined_context = (matter_series + " " + category_series + " " + practice_series).str.strip()
+
+    working["matter_name_signature"] = signatures
+    working["matter_name_signature_count"] = signature_counts
+    working["matter_name_signature_share"] = signature_share
+    working["matter_name_repeated_signature"] = repeated_signature
+    working["matter_name_entity_like"] = looks_entity_like
+    working["matter_name_legal_signal_score"] = signal_scores
+    working["matter_name_legal_signal"] = matter_has_signal
+    working["project_clustering_source"] = np.where(
+        matter_has_signal,
+        combined_context,
+        np.where(fallback_context.str.len() >= 3, fallback_context, matter_series),
+    )
+
+    return working
 
 
 def get_template_paths() -> tuple[Path | None, Path | None]:
@@ -1314,7 +1495,8 @@ def create_project_clusters(
         parent_project_name = working["project_name"].mode().iloc[0]
 
     working["matter_name"] = working[matter_name_col]
-    working["project_signature"] = working[matter_name_col].fillna("").apply(normalize_matter_name_signature)
+    signature_source_col = source_col if cluster_prefix == "cluster" else matter_name_col
+    working["project_signature"] = working[signature_source_col].fillna("").apply(normalize_matter_name_signature)
 
     if cluster_prefix == "cluster":
         # Main clustering should be driven by normalized matter-name signatures.
@@ -1365,7 +1547,7 @@ def create_project_clusters(
             k_selected = 1
             k_selection_results = pd.DataFrame()
         else:
-            keyword_diversity = estimate_project_keyword_diversity(working[matter_name_col], legal_keywords)
+            keyword_diversity = estimate_project_keyword_diversity(working[source_col], legal_keywords)
             candidate_ks = expand_candidate_ks_with_keyword_diversity(
                 candidate_ks,
                 keyword_diversity["estimated_project_signal_count"],
@@ -1439,11 +1621,12 @@ def create_project_clusters(
         top_terms = get_top_terms_from_text(cluster_df["primary_project_text"], ngram_n=1, top_n=10)
         top_bigrams = get_top_terms_from_text(cluster_df["primary_project_text"], ngram_n=2, top_n=10)
         raw_examples = cluster_df[matter_name_col].dropna().astype(str).tolist()
+        label_source_values = cluster_df[source_col] if source_col in cluster_df.columns else cluster_df[matter_name_col]
 
         combined_terms = ", ".join(top_terms + top_bigrams)
         combined_examples = " | ".join(raw_examples[:10])
 
-        signature_name, signature_share = dominant_signature_label(cluster_df[matter_name_col], min_share=0.35)
+        signature_name, signature_share = dominant_signature_label(label_source_values, min_share=0.35)
 
         project_name = signature_name
 
@@ -1458,8 +1641,8 @@ def create_project_clusters(
                     dominant_seed = seed_counts.index[0]
             project_name = dominant_seed or fallback_project_name(top_terms + top_bigrams, raw_examples[:10])
 
-        if not validate_cluster_label_against_examples(project_name, cluster_df[matter_name_col]):
-            fallback_signature_name, fallback_signature_share = dominant_signature_label(cluster_df[matter_name_col], min_share=0.25)
+        if not validate_cluster_label_against_examples(project_name, label_source_values):
+            fallback_signature_name, fallback_signature_share = dominant_signature_label(label_source_values, min_share=0.25)
             if fallback_signature_name:
                 project_name = fallback_signature_name
                 signature_share = fallback_signature_share
@@ -2115,6 +2298,7 @@ def build_effort_trend_chart(cluster_df: pd.DataFrame, date_col: str, granularit
     return fig
 
 
+
 # --- Helper functions for project option labels ---
 def make_project_option_label(project_name: str, has_subprojects: bool) -> str:
     return f"{project_name} *" if has_subprojects else project_name
@@ -2122,6 +2306,220 @@ def make_project_option_label(project_name: str, has_subprojects: bool) -> str:
 
 def strip_project_option_label(option_label: str) -> str:
     return option_label.replace(" *", "")
+
+
+# --- Post-clustering reconciliation helpers ---
+def simple_singularize_token(token: str) -> str:
+    token = str(token).lower().strip()
+    irregular = {
+        "children": "child",
+        "people": "person",
+        "companies": "company",
+        "agreements": "agreement",
+        "contracts": "contract",
+        "purchases": "purchase",
+        "leases": "lease",
+        "trusts": "trust",
+        "wills": "will",
+        "motions": "motion",
+        "claims": "claim",
+        "sales": "sale",
+        "documents": "document",
+        "filings": "filing",
+        "licenses": "license",
+        "licences": "license",
+    }
+    if token in irregular:
+        return irregular[token]
+    if token.endswith("ies") and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith("ses") and len(token) > 4:
+        return token[:-2]
+    if token.endswith("s") and not token.endswith("ss") and len(token) > 3:
+        return token[:-1]
+    return token
+
+
+def canonical_project_tokens(label: object) -> list[str]:
+    tokens = remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(label)))
+    return [simple_singularize_token(token) for token in tokens]
+
+
+def canonical_project_key(label: object) -> str:
+    tokens = canonical_project_tokens(label)
+    protected_phrases = {
+        "real estate": "real estate",
+        "estate planning": "estate planning",
+        "family law": "family law",
+        "intellectual property": "intellectual property",
+        "power attorney": "power attorney",
+    }
+    normalized = " ".join(tokens)
+    for phrase, replacement in protected_phrases.items():
+        if phrase in normalized:
+            normalized = normalized.replace(phrase, replacement)
+    return normalized.strip()
+
+
+def canonical_project_label(label: object) -> str:
+    key = canonical_project_key(label)
+    if not key:
+        return "Unclear / Needs Review"
+
+    label_map = {
+        "real estate purchase": "Real Estate Purchase",
+        "real purchase": "Real Estate Purchase",
+        "purchase real estate": "Real Estate Purchase",
+        "divorce child": "Divorce With Children",
+        "divorce children": "Divorce With Children",
+        "divorce no child": "Divorce Without Children",
+        "contested divorce child": "Contested Divorce With Children",
+        "uncontested divorce child": "Uncontested Divorce With Children",
+        "child support": "Child Support",
+        "estate planning": "Estate Planning",
+        "asset purchase agreement": "Asset Purchase Agreement",
+        "shareholder agreement": "Shareholder Agreement",
+        "independent contractor agreement": "Independent Contractor Agreement",
+    }
+    return label_map.get(key, key.title())
+
+
+def looks_like_company_or_person_label(label: object) -> bool:
+    text = str(label or "").strip()
+    if not text:
+        return True
+
+    lower_text = text.lower()
+    company_markers = [
+        " llc", " pllc", " inc", " ltd", " corp", " corporation", " company",
+        " holdings", " group", " partners", " enterprises", " limited",
+    ]
+    if any(marker in f" {lower_text}" for marker in company_markers):
+        return True
+
+    legal_tokens = set(canonical_project_tokens(text)).intersection(BASE_LEGAL_SERVICE_KEYWORDS)
+    token_count = len(text.split())
+
+    # Short labels with no legal signal are likely names or client-specific labels.
+    if token_count <= 3 and not legal_tokens:
+        return True
+
+    return False
+
+
+# The adaptive source helpers are defined earlier with legal_signal_score().
+# Do not redefine them here; later redefinitions would override the stricter scored logic.
+
+
+def choose_parent_project_label(project_name: str, all_project_names: list[str]) -> str:
+    current_tokens = canonical_project_tokens(project_name)
+    if not current_tokens:
+        return project_name
+
+    current_set = set(current_tokens)
+    candidates = []
+
+    protected_roots = {
+        "estate": {"real estate", "estate planning"},
+        "real": {"real estate"},
+    }
+
+    for candidate in all_project_names:
+        if candidate == project_name:
+            continue
+        candidate_tokens = canonical_project_tokens(candidate)
+        if not candidate_tokens:
+            continue
+
+        candidate_set = set(candidate_tokens)
+        candidate_key = canonical_project_key(candidate)
+        current_key = canonical_project_key(project_name)
+
+        # Avoid bad merges like Estate absorbing Real Estate or Estate Planning.
+        if "estate" in candidate_set or "estate" in current_set:
+            if ("real estate" in candidate_key) != ("real estate" in current_key):
+                continue
+            if ("estate planning" in candidate_key) != ("estate planning" in current_key):
+                continue
+
+        if candidate_set.issubset(current_set) and len(candidate_set) < len(current_set):
+            candidates.append((len(candidate_set), candidate))
+
+    if not candidates:
+        return project_name
+
+    # Prefer the simplest parent label.
+    return sorted(candidates, key=lambda x: (x[0], len(x[1])))[0][1]
+
+
+def reconcile_project_clusters(cluster_summary: pd.DataFrame, clustered_matters: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Conservative cleanup layer after initial clustering.
+    - Canonicalizes near-duplicate labels such as singular/plural variants.
+    - Prevents obvious company/person-like labels from surviving as project names when a legal fallback exists.
+    - Promotes broad parent project labels where a more specific label should become sub-project detail.
+    """
+    if cluster_summary.empty or "project_name" not in cluster_summary.columns:
+        return cluster_summary, clustered_matters
+
+    cluster_summary = cluster_summary.copy()
+    clustered_matters = clustered_matters.copy()
+
+    cluster_summary["original_project_name"] = cluster_summary["project_name"]
+    cluster_summary["project_name"] = cluster_summary["project_name"].map(canonical_project_label)
+
+    all_names = cluster_summary["project_name"].dropna().astype(str).drop_duplicates().tolist()
+    parent_map = {
+        name: choose_parent_project_label(name, all_names)
+        for name in all_names
+    }
+
+    cluster_summary["subproject_candidate_name"] = cluster_summary["project_name"]
+    cluster_summary["project_name"] = cluster_summary["project_name"].map(lambda name: parent_map.get(name, name))
+
+    # If a label looks like a company/person and there is a safer fallback in top bigrams/terms, use that fallback.
+    for idx, row in cluster_summary.iterrows():
+        if not looks_like_company_or_person_label(row["project_name"]):
+            continue
+
+        top_bigrams = [term.strip() for term in str(row.get("top_bigrams", "")).split(",") if term.strip()]
+        top_terms = [term.strip() for term in str(row.get("top_terms", "")).split(",") if term.strip()]
+        fallback = fallback_project_name(top_terms + top_bigrams, str(row.get("example_matter_names", "")).split(" | "))
+        if fallback and not looks_like_company_or_person_label(fallback):
+            cluster_summary.at[idx, "project_name"] = canonical_project_label(fallback)
+
+    if "cluster_id" in clustered_matters.columns and "cluster_id" in cluster_summary.columns:
+        project_lookup = cluster_summary.set_index("cluster_id")["project_name"].to_dict()
+        clustered_matters["project_name"] = clustered_matters["cluster_id"].map(project_lookup).fillna(clustered_matters.get("project_name", "Unclassified Project"))
+
+        if "subproject_candidate_name" in cluster_summary.columns:
+            subproject_lookup = cluster_summary.set_index("cluster_id")["subproject_candidate_name"].to_dict()
+            clustered_matters["reconciled_subproject_candidate"] = clustered_matters["cluster_id"].map(subproject_lookup)
+
+    cluster_summary = (
+        cluster_summary.groupby("project_name", as_index=False)
+        .agg(
+            cluster_id=("cluster_id", "first"),
+            display_label=("display_label", "first"),
+            matter_count=("matter_count", "sum"),
+            total_billing=("total_billing", "sum"),
+            avg_billing=("avg_billing", "mean"),
+            top_terms=("top_terms", "first"),
+            top_bigrams=("top_bigrams", "first"),
+            example_matter_names=("example_matter_names", "first"),
+            dominant_signature_share=("dominant_signature_share", "max"),
+            original_project_name=("original_project_name", lambda s: " | ".join(sorted(set(s.dropna().astype(str))))),
+        )
+        .sort_values(["matter_count", "total_billing"], ascending=[False, False])
+    )
+
+    cluster_summary["avg_billing"] = np.where(
+        cluster_summary["matter_count"] > 0,
+        cluster_summary["total_billing"] / cluster_summary["matter_count"],
+        0,
+    )
+
+    return cluster_summary, clustered_matters
 
 
 
@@ -2207,11 +2605,21 @@ rate_col = columns["avg_rate"]
 entries_col = columns["n_time_entries"]
 users_col = columns["n_unique_users"]
 practice_area_col = columns["practice_area"]
+matter_category_col = columns["matter_category"]
 time_entry_text_col = columns["all_time_entry_text"]
 
 matter_df[billing_col] = pd.to_numeric(matter_df[billing_col], errors="coerce").fillna(0)
 matter_df["parsed_date"] = parse_dates(matter_df, date_col)
 matter_df["matter_id_for_count"] = matter_df[matter_col]
+
+matter_df = build_project_clustering_source(
+    matter_df,
+    matter_name_col=matter_name_col,
+    matter_category_col=matter_category_col,
+    practice_area_col=practice_area_col,
+)
+
+matter_name_signal_rate = matter_df["matter_name_legal_signal"].mean()
 
 account_names = matter_df[account_col].dropna().astype(str).unique()
 account_name = account_names[0] if len(account_names) > 0 else "Unknown Account"
@@ -2273,6 +2681,12 @@ with overview_tab:
         render_metric_card("Total billing", format_currency(total_billing), "Sum of matter billings")
     with metric_cols[3]:
         render_metric_card("Avg. billing", format_currency(average_billing), "Average per matter")
+
+    if "matter_name_legal_signal" in matter_df.columns:
+        st.caption(
+            f"Matter-name legal signal detected in {matter_name_signal_rate:.0%} of matters. "
+            "When missing, clustering uses matter category and practice area instead."
+        )
 
     if valid_dates.empty:
         st.error("No valid dates were found, so the trend chart cannot be created.")
@@ -2346,11 +2760,13 @@ with clustering_tab:
                 use_ai=use_ai,
                 progress_bar=progress_bar,
                 status_box=status_box,
+                text_col="project_clustering_source",
             )
 
         if cluster_summary.empty:
             st.error("No clusters could be created. Check that the file has usable matter names.")
         else:
+            cluster_summary, clustered_matters = reconcile_project_clusters(cluster_summary, clustered_matters)
             clustered_matters = add_numeric_columns(clustered_matters, billing_col, hours_col, rate_col, entries_col, users_col)
             st.session_state["cluster_summary"] = cluster_summary
             st.session_state["clustered_matters"] = clustered_matters
