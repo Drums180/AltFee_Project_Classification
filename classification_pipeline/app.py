@@ -112,6 +112,10 @@ CUSTOM_CSS = """
         padding: 1.1rem 1.25rem;
         box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
         min-height: 360px;
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        height: 100%;
     }
 
     .ranking-title {
@@ -158,6 +162,21 @@ CUSTOM_CSS = """
         color: #7B7B7B;
         font-size: 0.8rem;
         margin-top: 0.8rem;
+    }
+
+    .ranking-number-1 {
+        font-weight: 900;
+        color: #54B39A;
+    }
+
+    .ranking-number-2 {
+        font-weight: 900;
+        color: #F28C4C;
+    }
+
+    .ranking-number-3 {
+        font-weight: 900;
+        color: #4E79A7;
     }
 </style>
 """
@@ -1770,13 +1789,18 @@ def build_project_ring_chart(project_summary: pd.DataFrame, color_map: dict[str,
     return fig
 
 
-def render_project_ranking(project_summary: pd.DataFrame) -> None:
+def render_project_ranking(project_summary: pd.DataFrame, color_map: dict[str, str] | None = None) -> None:
     top_five = project_summary.head(5).copy()
     rows = []
     for index, row in top_five.reset_index(drop=True).iterrows():
+        rank = index + 1
+        number_class = ""
+        if rank <= 3:
+            number_class = f" ranking-number-{rank}"
+        
         rows.append(
             f"<div class='ranking-row'>"
-            f"<span class='ranking-name'>{index + 1}. {row['project_name']}</span>"
+            f"<span class='ranking-name'><span class='{number_class}'>{rank}.</span> {row['project_name']}</span>"
             f"<span class='ranking-value'>{row['total_matters']:,.0f}</span>"
             f"</div>"
         )
@@ -1790,16 +1814,20 @@ def render_project_ranking(project_summary: pd.DataFrame) -> None:
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_revenue_ranking(project_summary: pd.DataFrame) -> None:
-    revenue_df = project_summary.sort_values("total_billing", ascending=False).head(5).copy().reset_index(drop=True)
-    top_total_project = project_summary.sort_values("total_billing", ascending=False).iloc[0]["project_name"]
+def render_revenue_ranking(project_summary: pd.DataFrame, color_map: dict[str, str] | None = None) -> None:
+    revenue_df = project_summary.sort_values("total_billing", ascending=False).reset_index(drop=True)
+    top_five = revenue_df.head(5).copy()
+    top_total_project = revenue_df.iloc[0]["project_name"]
     top_avg_project = project_summary.sort_values("avg_billing", ascending=False).iloc[0]["project_name"]
 
     rows = []
-    for index, row in revenue_df.iterrows():
+    # Display top 5 by total revenue
+    for index, row in top_five.iterrows():
+        rank = index + 1
         name_class = ""
         value_class = ""
         suffix = ""
+        number_class = ""
 
         if row["project_name"] == top_total_project:
             name_class = "ranking-bold-black"
@@ -1813,8 +1841,19 @@ def render_revenue_ranking(project_summary: pd.DataFrame) -> None:
 
         rows.append(
             f"<div class='ranking-row'>"
-            f"<span class='ranking-name {name_class}'>{index + 1}. {row['project_name']}{suffix}</span>"
+            f"<span class='ranking-name {name_class}'>{rank}. {row['project_name']}{suffix}</span>"
             f"<span class='ranking-value {value_class}'>{format_currency(row['total_billing'])}</span>"
+            f"</div>"
+        )
+
+    # If highest revenue per project is not in top 5, show it as additional row with actual rank
+    if top_avg_project not in top_five["project_name"].values:
+        actual_rank = revenue_df[revenue_df["project_name"] == top_avg_project].index[0] + 1
+        top_avg_row = revenue_df[revenue_df["project_name"] == top_avg_project].iloc[0]
+        rows.append(
+            f"<div class='ranking-row'>"
+            f"<span class='ranking-name ranking-bold-red'>{actual_rank}. {top_avg_project} <span class='ranking-bold-red'>*</span></span>"
+            f"<span class='ranking-value ranking-bold-red'>{format_currency(top_avg_row['total_billing'])}</span>"
             f"</div>"
         )
 
@@ -1822,6 +1861,7 @@ def render_revenue_ranking(project_summary: pd.DataFrame) -> None:
         "<div class='ranking-card'>"
         "<div class='ranking-title'>Total Revenue</div>"
         f"{''.join(rows)}"
+        "<div style='padding-top: 0.8rem;'></div>"
         "<div class='ranking-footnote'><span class='ranking-bold-red'>*</span> Project type with higher revenue per project.</div>"
         "</div>"
     )
@@ -2352,9 +2392,9 @@ with clustering_tab:
     with top_layout[0]:
         st.plotly_chart(build_project_ring_chart(project_summary, project_color_map), use_container_width=True)
     with top_layout[1]:
-        render_project_ranking(project_summary)
+        render_project_ranking(project_summary, project_color_map)
     with top_layout[2]:
-        render_revenue_ranking(project_summary)
+        render_revenue_ranking(project_summary, project_color_map)
 
     st.markdown("### Project Detail")
 
