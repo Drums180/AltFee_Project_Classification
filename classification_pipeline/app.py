@@ -8,10 +8,13 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from collections import Counter
+from difflib import SequenceMatcher
+from html import escape
 from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 from sklearn.metrics import silhouette_score
+from urllib.parse import quote
 
 
 st.set_page_config(
@@ -177,6 +180,85 @@ CUSTOM_CSS = """
     .ranking-number-3 {
         font-weight: 900;
         color: #4E79A7;
+    }
+
+    .folio-project-header {
+        background: #ffffff;
+        border: 1px solid #D9D9D9;
+        border-left: 7px solid #54B39A;
+        border-radius: 18px;
+        padding: 1.2rem 1.35rem;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+        margin-bottom: 1rem;
+    }
+
+    .folio-project-heading {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        margin-bottom: 0.35rem;
+    }
+
+    .folio-project-heading h3 {
+        color: #1F1F1F;
+        font-size: 1.35rem;
+        font-weight: 850;
+        margin: 0;
+    }
+
+    .folio-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: linear-gradient(135deg, #E8F7EF 0%, #FFF3D8 100%);
+        border: 1px solid #B7E0CB;
+        border-radius: 999px;
+        color: #2C8576;
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.02em;
+        padding: 0.24rem 0.62rem;
+        box-shadow: 0 0 0 3px rgba(84, 179, 154, 0.10);
+        white-space: nowrap;
+    }
+
+    .folio-badge::before {
+        content: "";
+        width: 0.46rem;
+        height: 0.46rem;
+        border-radius: 999px 999px 999px 0;
+        background: #54B39A;
+        transform: rotate(-35deg);
+        animation: folio-leaf-glow 2.4s ease-in-out infinite;
+    }
+
+    @keyframes folio-leaf-glow {
+        0%, 100% {
+            box-shadow: 0 0 0 0 rgba(84, 179, 154, 0.28);
+        }
+        50% {
+            box-shadow: 0 0 0 5px rgba(84, 179, 154, 0.08);
+        }
+    }
+
+    .folio-project-title {
+        color: #2C8576;
+        font-size: 0.95rem;
+        font-weight: 800;
+        margin-bottom: 0.35rem;
+    }
+
+    .folio-project-description {
+        color: #4B5563;
+        font-size: 0.94rem;
+        line-height: 1.5;
+        margin-bottom: 0.25rem;
+    }
+
+    .folio-project-meta {
+        color: #7B7B7B;
+        font-size: 0.78rem;
     }
 </style>
 """
@@ -442,7 +524,7 @@ BASE_LEGAL_SERVICE_KEYWORDS = {
     "litigation", "dispute", "claim", "claims", "settlement", "court", "motion", "pleading", "pleadings",
     "employment", "employee", "employer", "termination", "severance", "immigration", "visa", "permit",
     "trademark", "copyright", "ip", "intellectual", "property", "real", "transaction", "purchase", "sale",
-    "family", "divorce", "separation", "custody", "support", "tax", "planning", "financing", "loan",
+    "family", "divorce", "dissolution", "separation", "custody", "support", "tax", "planning", "financing", "loan",
     "privacy", "policy", "terms", "service", "licensing", "license", "review", "advisory", "compliance",
 }
 
@@ -563,8 +645,8 @@ def normalize_matter_name_signature(value: object) -> str:
         text = re.sub(rf"\b{re.escape(phrase)}\b", " ", text)
 
     phrase_replacements = {
-        "dissolution of marriage": "divorce",
-        "marriage dissolution": "divorce",
+        "dissolution of marriage": "dissolution",
+        "marriage dissolution": "dissolution",
         "divorce children": "divorce with children",
         "divorce child": "divorce with children",
         "divorce with child": "divorce with children",
@@ -573,6 +655,13 @@ def normalize_matter_name_signature(value: object) -> str:
         "divorce no children": "divorce no children",
         "divorce without children": "divorce no children",
         "divorce no child": "divorce no children",
+        "divorce without child": "divorce no children",
+        "divorce no kids": "divorce no children",
+        "divorce without kids": "divorce no children",
+        "dissolution no kids": "dissolution no children",
+        "dissolution without kids": "dissolution no children",
+        "dissolution with kids": "dissolution with children",
+        "dissolution with child": "dissolution with children",
         "contested divorce children": "contested divorce with children",
         "contested divorce with child": "contested divorce with children",
         "uncontested divorce children": "uncontested divorce with children",
@@ -597,15 +686,26 @@ def normalize_matter_name_signature(value: object) -> str:
 
     # Preserve important family-law modifiers.
     original_text = text
+    if "dissolution" in tokens:
+        if "no children" in original_text or "without children" in original_text:
+            return "dissolution no children"
+        if "child" in tokens or "children" in tokens:
+            if "contested" in tokens:
+                return "contested dissolution children"
+            if "uncontested" in tokens:
+                return "uncontested dissolution children"
+            return "dissolution children"
+        return "dissolution"
+
     if "divorce" in tokens:
+        if "no children" in original_text or "without children" in original_text:
+            return "divorce no children"
         if "child" in tokens or "children" in tokens:
             if "contested" in tokens:
                 return "contested divorce children"
             if "uncontested" in tokens:
                 return "uncontested divorce children"
             return "divorce children"
-        if "no children" in original_text or "without children" in original_text:
-            return "divorce no children"
         return "divorce"
 
     if "custody" in tokens:
@@ -641,6 +741,11 @@ def title_from_signature(signature: str) -> str:
         "uncontested divorce children": "Uncontested Divorce With Children",
         "divorce no children": "Divorce Without Children",
         "divorce": "Divorce",
+        "dissolution children": "Dissolution With Children",
+        "contested dissolution children": "Contested Dissolution With Children",
+        "uncontested dissolution children": "Uncontested Dissolution With Children",
+        "dissolution no children": "Dissolution Without Children",
+        "dissolution": "Dissolution",
         "custody": "Custody",
         "child support": "Child Support",
         "postjudgment": "Post Judgment",
@@ -662,6 +767,160 @@ def dominant_signature_label(values: pd.Series, min_share: float = 0.45) -> tupl
         return title_from_signature(top_signature), top_share
 
     return None, top_share
+
+
+def normalize_phrase_variant_token(token: str) -> str:
+    token = normalize_legal_token(str(token).lower().strip())
+    variant_map = {
+        "parenting": "parent",
+        "parental": "parent",
+        "parents": "parent",
+        "children": "child",
+        "kids": "child",
+        "plans": "plan",
+        "agreements": "agreement",
+        "contracts": "contract",
+    }
+    return variant_map.get(token, token)
+
+
+def title_from_phrase_key(phrase_key: str) -> str:
+    label_map = {
+        "parent plan": "Parenting Plan",
+        "child support": "Child Support",
+        "estate planning": "Estate Planning",
+        "real estate": "Real Estate",
+        "flat fee": "Flat Fee",
+    }
+    return label_map.get(phrase_key, phrase_key.title())
+
+
+CLUSTER_ROOT_PHRASES = [
+    "real estate",
+    "estate planning",
+    "child support",
+    "postjudgment",
+    "asset purchase",
+    "shareholder agreement",
+    "contractor agreement",
+]
+CLUSTER_PURITY_THRESHOLD = 0.95
+FLAT_FEE_PROJECT_NAME = "Flat Fee"
+
+
+def get_project_root_signal(signature: object) -> str:
+    text = re.sub(r"\s+", " ", str(signature or "").strip().lower())
+    if not text:
+        return ""
+    for phrase in CLUSTER_ROOT_PHRASES:
+        if phrase in text:
+            return phrase
+    tokens = remove_junk_tokens(tokenize_text(text))
+    return tokens[0] if tokens else ""
+
+
+def extract_consecutive_phrase_keys(value: object, min_n: int = 2, max_n: int = 3) -> set[str]:
+    tokens = [normalize_phrase_variant_token(token) for token in tokenize_text(value) if token and not token.isdigit()]
+    phrase_keys = set()
+    for n in range(min_n, max_n + 1):
+        if len(tokens) < n:
+            continue
+        for index in range(len(tokens) - n + 1):
+            phrase_tokens = tokens[index:index + n]
+            if any(token in PROJECT_STOPWORDS or len(token) <= 2 for token in phrase_tokens):
+                continue
+            phrase_keys.add(" ".join(phrase_tokens))
+    return phrase_keys
+
+
+def dominant_consecutive_phrase_label(values: pd.Series, min_share: float = 0.95) -> tuple[str | None, float]:
+    examples = values.dropna().astype(str).map(str.strip).loc[lambda s: s != ""]
+    if examples.empty:
+        return None, 0.0
+    phrase_counts = Counter()
+    for value in examples:
+        phrase_counts.update(extract_consecutive_phrase_keys(value))
+    if not phrase_counts:
+        return None, 0.0
+    top_phrase, top_count = phrase_counts.most_common(1)[0]
+    top_share = top_count / len(examples)
+    if top_share >= min_share:
+        return title_from_phrase_key(top_phrase), float(top_share)
+    return None, float(top_share)
+
+
+def root_first_cluster_label(values: pd.Series, min_share: float = 0.35, phrase_share: float = 0.95) -> tuple[str | None, float]:
+    signatures = values.dropna().map(normalize_matter_name_signature)
+    signatures = signatures[signatures.str.len() > 0]
+    if signatures.empty:
+        return None, 0.0
+    roots = signatures.map(get_project_root_signal)
+    roots = roots[roots.str.len() > 0]
+    if roots.empty:
+        return dominant_signature_label(values, min_share=min_share)
+    root_shares = roots.value_counts(normalize=True)
+    top_root = root_shares.index[0]
+    top_root_share = float(root_shares.iloc[0])
+    if top_root_share >= min_share:
+        phrase_label, phrase_share_value = dominant_consecutive_phrase_label(values, min_share=phrase_share)
+        if phrase_label:
+            return phrase_label, phrase_share_value
+        return title_from_signature(top_root), top_root_share
+    return dominant_signature_label(values, min_share=min_share)
+
+
+def matter_name_contains_flat_fee(value: object) -> bool:
+    return bool(re.search(r"\bflat\s*fee\b", clean_text(value)))
+
+
+def is_flat_fee_project(value: object) -> bool:
+    return str(value or "").strip().lower() == FLAT_FEE_PROJECT_NAME.lower()
+
+
+def enforce_cluster_root_purity(working: pd.DataFrame, cluster_col: str, signature_col: str = "project_signature") -> pd.DataFrame:
+    if working.empty or cluster_col not in working.columns or signature_col not in working.columns:
+        return working
+    working = working.copy()
+    working["cluster_root_signal"] = working[signature_col].map(get_project_root_signal)
+    next_cluster_id = int(pd.to_numeric(working[cluster_col], errors="coerce").max()) + 1
+    split_notes = pd.Series("", index=working.index, dtype="object")
+    for cluster_id in sorted(working[cluster_col].dropna().unique()):
+        cluster_index = working.index[working[cluster_col] == cluster_id]
+        root_counts = working.loc[cluster_index, "cluster_root_signal"].loc[lambda s: s != ""].value_counts()
+        if root_counts.empty:
+            continue
+        dominant_root = root_counts.index[0]
+        dominant_share = float((working.loc[cluster_index, "cluster_root_signal"] == dominant_root).mean())
+        if dominant_share >= CLUSTER_PURITY_THRESHOLD:
+            continue
+        for root_signal in root_counts[root_counts.index != dominant_root].index.tolist():
+            split_index = cluster_index[working.loc[cluster_index, "cluster_root_signal"] == root_signal]
+            if split_index.empty:
+                continue
+            working.loc[split_index, cluster_col] = next_cluster_id
+            split_notes.loc[split_index] = (
+                f"Split from cluster {cluster_id}: dominant root '{dominant_root}' share "
+                f"{dominant_share:.0%}; separated root '{root_signal}'."
+            )
+            next_cluster_id += 1
+    working["cluster_purity_note"] = split_notes
+    return working
+
+
+def force_flat_fee_cluster(working: pd.DataFrame, cluster_col: str, matter_name_col: str) -> pd.DataFrame:
+    if working.empty or cluster_col not in working.columns or matter_name_col not in working.columns:
+        return working
+    flat_fee_mask = working[matter_name_col].apply(matter_name_contains_flat_fee)
+    if not flat_fee_mask.any():
+        return working
+    working = working.copy()
+    next_cluster_id = int(pd.to_numeric(working[cluster_col], errors="coerce").max()) + 1
+    working.loc[flat_fee_mask, cluster_col] = next_cluster_id
+    working.loc[flat_fee_mask, "project_signature"] = "flat fee"
+    working.loc[flat_fee_mask, "primary_project_text"] = "flat fee"
+    working.loc[flat_fee_mask, "cluster_root_signal"] = "flat fee"
+    working.loc[flat_fee_mask, "cluster_purity_note"] = "Forced flat fee group."
+    return working
 
 
 # --- Cluster label validation ---
@@ -848,6 +1107,480 @@ def classify_clusters_to_practice_areas(cluster_summary: pd.DataFrame, candidate
 
     cluster_summary["predicted_practice_area"] = predicted_areas
     cluster_summary["practice_area_score"] = scores
+    return cluster_summary
+
+
+FOLIO_API_BASE_URL = "https://folio.openlegalstandard.org"
+FOLIO_SEARCH_TIMEOUT_SECONDS = 8
+FOLIO_MATCH_THRESHOLD = 0.35
+
+
+def first_text_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)) and not pd.isna(value):
+        return str(value)
+    if isinstance(value, list):
+        for item in value:
+            text = first_text_value(item)
+            if text:
+                return text
+    if isinstance(value, dict):
+        for key in ["@value", "value", "label", "name", "title", "description"]:
+            text = first_text_value(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def get_nested_text(payload: dict, keys: list[str]) -> str:
+    for key in keys:
+        if key in payload:
+            text = first_text_value(payload.get(key))
+            if text:
+                return text
+    return ""
+
+
+def normalize_folio_class_id(value: object) -> str:
+    class_id = first_text_value(value)
+    if not class_id:
+        return ""
+    class_id = class_id.rstrip("/")
+    if class_id.startswith("http://") or class_id.startswith("https://"):
+        class_id = class_id.split("/")[-1]
+    return class_id
+
+
+def extract_folio_search_results(payload: object) -> list[dict]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ["results", "matches", "data", "items", "concepts"]:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            nested_results = extract_folio_search_results(value)
+            if nested_results:
+                return nested_results
+    return [payload] if payload else []
+
+
+def extract_folio_title(payload: dict) -> str:
+    if isinstance(payload, dict) and isinstance(payload.get("@graph"), list):
+        for node in payload["@graph"]:
+            if isinstance(node, dict):
+                text = extract_folio_title(node)
+                if text:
+                    return text
+    return get_nested_text(payload, [
+        "title",
+        "prefLabel",
+        "preferredLabel",
+        "label",
+        "name",
+        "rdfs:label",
+        "skos:prefLabel",
+        "http://www.w3.org/2000/01/rdf-schema#label",
+        "http://www.w3.org/2004/02/skos/core#prefLabel",
+    ])
+
+
+def extract_folio_description(payload: dict) -> str:
+    if isinstance(payload, dict) and isinstance(payload.get("@graph"), list):
+        for node in payload["@graph"]:
+            if isinstance(node, dict):
+                text = extract_folio_description(node)
+                if text:
+                    return text
+    return get_nested_text(payload, [
+        "description",
+        "definition",
+        "comment",
+        "rdfs:comment",
+        "skos:definition",
+        "http://www.w3.org/2000/01/rdf-schema#comment",
+        "http://www.w3.org/2004/02/skos/core#definition",
+    ])
+
+
+def extract_folio_class_id(payload: dict) -> str:
+    if isinstance(payload, dict) and isinstance(payload.get("@graph"), list):
+        for node in payload["@graph"]:
+            if isinstance(node, dict):
+                class_id = extract_folio_class_id(node)
+                if class_id:
+                    return class_id
+    for key in ["class_id", "classId", "id", "@id", "iri", "uri", "concept_id", "conceptId"]:
+        class_id = normalize_folio_class_id(payload.get(key))
+        if class_id:
+            return class_id
+    return ""
+
+
+def folio_match_score(cluster_name: str, folio_title: str) -> float:
+    cluster_text = normalize_legal_text_for_clustering(cluster_name)
+    title_text = normalize_legal_text_for_clustering(folio_title)
+    if not cluster_text or not title_text:
+        return 0.0
+    cluster_tokens = cluster_text.split()
+    title_tokens = title_text.split()
+    cluster_token_set = set(cluster_tokens)
+    title_token_set = set(title_tokens)
+    cluster_bigrams = set(make_ngrams(cluster_tokens, 2))
+    title_bigrams = set(make_ngrams(title_tokens, 2))
+    if cluster_bigrams.intersection(title_bigrams):
+        return 1.0
+    overlap = len(cluster_token_set.intersection(title_token_set))
+    union = len(cluster_token_set.union(title_token_set))
+    token_score = overlap / union if union else 0.0
+    containment_score = overlap / len(cluster_token_set) if cluster_token_set else 0.0
+    sequence_score = SequenceMatcher(None, cluster_text, title_text).ratio()
+    return max(token_score, containment_score * 0.92, sequence_score * 0.82)
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 12)
+def fetch_folio_project_match(cluster_name: str, min_score: float = FOLIO_MATCH_THRESHOLD) -> dict:
+    clean_cluster_name = str(cluster_name or "").strip()
+    empty_result = {
+        "folio_verified": False,
+        "folio_title": "",
+        "folio_description": "",
+        "folio_class_id": "",
+        "folio_match_score": np.nan,
+        "folio_match_method": "no_match",
+        "folio_search_url": "",
+    }
+    if not clean_cluster_name:
+        return empty_result
+
+    search_url = f"{FOLIO_API_BASE_URL}/search/prefix"
+    try:
+        search_response = requests.get(
+            search_url,
+            params={"query": clean_cluster_name},
+            timeout=FOLIO_SEARCH_TIMEOUT_SECONDS,
+        )
+        search_response.raise_for_status()
+        search_results = extract_folio_search_results(search_response.json())
+    except Exception:
+        result = empty_result.copy()
+        result["folio_match_method"] = "folio_search_failed"
+        result["folio_search_url"] = f"{search_url}?query={quote(clean_cluster_name)}"
+        return result
+
+    best_result = None
+    best_score = 0.0
+    best_title = ""
+    for candidate in search_results:
+        candidate_title = extract_folio_title(candidate)
+        candidate_id = extract_folio_class_id(candidate)
+        if not candidate_title:
+            candidate_title = candidate_id
+        score = folio_match_score(clean_cluster_name, candidate_title)
+        if score > best_score:
+            best_result = candidate
+            best_score = score
+            best_title = candidate_title
+
+    if best_result is None or best_score < min_score:
+        result = empty_result.copy()
+        result["folio_match_score"] = round(float(best_score), 3)
+        result["folio_match_method"] = "below_threshold"
+        result["folio_search_url"] = f"{search_url}?query={quote(clean_cluster_name)}"
+        return result
+
+    class_id = extract_folio_class_id(best_result)
+    jsonld_payload = {}
+    if class_id:
+        try:
+            jsonld_response = requests.get(
+                f"{FOLIO_API_BASE_URL}/{quote(class_id, safe='')}/jsonld",
+                timeout=FOLIO_SEARCH_TIMEOUT_SECONDS,
+            )
+            jsonld_response.raise_for_status()
+            jsonld_payload = jsonld_response.json()
+        except Exception:
+            jsonld_payload = {}
+
+    folio_title = extract_folio_title(jsonld_payload) if isinstance(jsonld_payload, dict) else ""
+    folio_description = extract_folio_description(jsonld_payload) if isinstance(jsonld_payload, dict) else ""
+    if not folio_title:
+        folio_title = best_title
+    if not folio_description:
+        folio_description = extract_folio_description(best_result)
+
+    return {
+        "folio_verified": bool(folio_title),
+        "folio_title": folio_title,
+        "folio_description": folio_description,
+        "folio_class_id": class_id,
+        "folio_match_score": round(float(best_score), 3),
+        "folio_match_method": "prefix_search_top_match",
+        "folio_search_url": f"{search_url}?query={quote(clean_cluster_name)}",
+    }
+
+
+def enrich_clusters_with_folio(cluster_summary: pd.DataFrame) -> pd.DataFrame:
+    cluster_summary = cluster_summary.copy()
+    folio_rows = []
+    for project_name in cluster_summary["project_name"].fillna("").astype(str):
+        folio_rows.append(fetch_folio_project_match(project_name))
+    folio_df = pd.DataFrame(folio_rows)
+    return pd.concat([cluster_summary.reset_index(drop=True), folio_df.reset_index(drop=True)], axis=1)
+
+
+def normalize_firm_practice_area_label(value: object) -> str:
+    label = "" if pd.isna(value) else str(value)
+    label = re.sub(r"\s+", " ", label).strip().lower()
+    return label.title() if label else ""
+
+
+def practice_area_match_score(firm_label: str, candidate_label: str) -> float:
+    firm_text = normalize_legal_text_for_clustering(firm_label)
+    candidate_text = normalize_legal_text_for_clustering(candidate_label)
+    if not firm_text or not candidate_text:
+        return 0.0
+    firm_token_list = firm_text.split()
+    candidate_token_list = candidate_text.split()
+    firm_tokens = set(firm_token_list)
+    candidate_tokens = set(candidate_token_list)
+    firm_bigrams = set(make_ngrams(firm_token_list, 2))
+    candidate_bigrams = set(make_ngrams(candidate_token_list, 2))
+    if firm_bigrams.intersection(candidate_bigrams):
+        return 1.0
+    overlap = len(firm_tokens.intersection(candidate_tokens))
+    union = len(firm_tokens.union(candidate_tokens))
+    token_score = overlap / union if union else 0.0
+    containment_score = overlap / len(firm_tokens) if firm_tokens else 0.0
+    reverse_containment_score = overlap / len(candidate_tokens) if candidate_tokens else 0.0
+    sequence_score = SequenceMatcher(None, firm_text, candidate_text).ratio()
+    return max(token_score, containment_score * 0.92, reverse_containment_score * 0.92, sequence_score * 0.82)
+
+
+def map_firm_practice_area_to_folio(firm_label: str, folio_labels: list[str]) -> tuple[str | None, float]:
+    if not firm_label or not folio_labels:
+        return None, 0.0
+    best_label = None
+    best_score = 0.0
+    for folio_label in folio_labels:
+        score = practice_area_match_score(firm_label, folio_label)
+        if score > best_score:
+            best_label = folio_label
+            best_score = score
+    if best_label and best_score >= 0.80:
+        return best_label, best_score
+    return None, best_score
+
+
+def count_label_words(label: object) -> int:
+    return len(tokenize_text(label))
+
+
+def build_firm_specific_taxonomy_labels(
+    matter_df: pd.DataFrame,
+    practice_area_col: str | None,
+    folio_labels: list[str],
+) -> tuple[list[str], pd.DataFrame]:
+    taxonomy_labels = list(dict.fromkeys(folio_labels))
+    mapping_rows = []
+    if not practice_area_col or practice_area_col not in matter_df.columns:
+        return sorted(taxonomy_labels), pd.DataFrame(mapping_rows)
+    raw_values = matter_df[practice_area_col].drop_duplicates().tolist()
+    kept_labels = set(taxonomy_labels)
+    for raw_value in raw_values:
+        cleaned_label = normalize_firm_practice_area_label(raw_value)
+        if not cleaned_label:
+            mapping_rows.append({
+                "raw_practice_area": raw_value,
+                "cleaned_practice_area": "",
+                "matched_folio_label": "",
+                "folio_match_score": np.nan,
+                "action": "dropped_empty",
+                "final_taxonomy_label": "",
+            })
+            continue
+        mapped_label, score = map_firm_practice_area_to_folio(cleaned_label, folio_labels)
+        if mapped_label:
+            classification_label = mapped_label
+            action = "mapped_to_folio"
+        elif count_label_words(cleaned_label) > 4:
+            mapping_rows.append({
+                "raw_practice_area": raw_value,
+                "cleaned_practice_area": cleaned_label,
+                "matched_folio_label": "",
+                "folio_match_score": round(float(score), 3),
+                "action": "dropped_too_many_words",
+                "final_taxonomy_label": "",
+            })
+            continue
+        else:
+            classification_label = cleaned_label
+            action = "kept_firm_specific"
+        if classification_label in kept_labels:
+            if not mapped_label:
+                action = "dropped_duplicate"
+            final_taxonomy_label = classification_label
+        else:
+            taxonomy_labels.append(classification_label)
+            kept_labels.add(classification_label)
+            final_taxonomy_label = classification_label
+        mapping_rows.append({
+            "raw_practice_area": raw_value,
+            "cleaned_practice_area": cleaned_label,
+            "matched_folio_label": mapped_label or "",
+            "folio_match_score": round(float(score), 3),
+            "action": action,
+            "final_taxonomy_label": final_taxonomy_label,
+        })
+    return sorted(taxonomy_labels), pd.DataFrame(mapping_rows)
+
+
+def build_taxonomy_candidate_source_map(candidate_labels: list[str], mapping_df: pd.DataFrame) -> dict[str, str]:
+    source_map = {label: "folio" for label in candidate_labels}
+    if mapping_df.empty:
+        return source_map
+    for _, row in mapping_df.iterrows():
+        label = row.get("final_taxonomy_label")
+        action = row.get("action")
+        if not label:
+            continue
+        if action == "kept_firm_specific":
+            source_map[label] = "firm"
+        elif label not in source_map:
+            source_map[label] = "folio"
+    return source_map
+
+
+def build_taxonomy_level_classification_text(row: pd.Series) -> str:
+    return (
+        f"Practice area null percentage: {row.get('practice_area_null_percentage', '')}\n"
+        f"Most frequent practice area: {row.get('most_frequent_practice_area', '')}\n"
+        f"Top terms: {row.get('top_terms', '')}\n"
+        f"Top phrases: {row.get('top_bigrams', '')}\n"
+        f"Example matters: {row.get('example_matter_names', '')}"
+    )
+
+
+def normalize_taxonomy_candidate_label(value: object) -> str:
+    return normalize_legal_text_for_clustering(value)
+
+
+def find_best_existing_candidate(preferred_labels: list[str], candidate_labels: list[str]) -> str | None:
+    lookup = {normalize_taxonomy_candidate_label(label): label for label in candidate_labels if normalize_taxonomy_candidate_label(label)}
+    for preferred_label in preferred_labels:
+        normalized_preferred = normalize_taxonomy_candidate_label(preferred_label)
+        if normalized_preferred in lookup:
+            return lookup[normalized_preferred]
+    for preferred_label in preferred_labels:
+        preferred_tokens = set(remove_junk_tokens(tokenize_text(preferred_label)))
+        if not preferred_tokens:
+            continue
+        best_label = None
+        best_score = 0
+        for candidate_label in candidate_labels:
+            candidate_tokens = set(remove_junk_tokens(tokenize_text(candidate_label)))
+            if not candidate_tokens:
+                continue
+            score = len(preferred_tokens.intersection(candidate_tokens)) / max(len(preferred_tokens), 1)
+            if score > best_score:
+                best_label = candidate_label
+                best_score = score
+        if best_label and best_score >= 0.75:
+            return best_label
+    return None
+
+
+def infer_obvious_taxonomy_level(row: pd.Series, candidate_labels: list[str], candidate_source_map: dict[str, str] | None = None):
+    top_terms = str(row.get("top_terms", ""))
+    top_bigrams = str(row.get("top_bigrams", ""))
+    examples = str(row.get("example_matter_names", ""))
+    most_frequent_practice_area = str(row.get("most_frequent_practice_area", "") or "")
+    if most_frequent_practice_area:
+        existing_candidate = find_best_existing_candidate([most_frequent_practice_area, f"{most_frequent_practice_area} law"], candidate_labels)
+        if existing_candidate:
+            candidate_source = (candidate_source_map or {}).get(existing_candidate)
+            method = "firm_practice_area" if candidate_source == "firm" else "folio_practice_area_match"
+            return existing_candidate, 1.0, method
+    evidence_tokens = set(remove_junk_tokens(tokenize_text(" ".join([top_terms, top_bigrams, examples, most_frequent_practice_area]))))
+    rule_map = [
+        ({"divorce", "dissolution", "custody", "support", "parenting", "separation", "child", "children"}, ["Family Law", "Personal and Family Law", "Family"]),
+        ({"will", "trust", "probate", "estate", "poa"}, ["Estate Planning", "Trusts And Estates"]),
+        ({"immigration", "visa", "permit", "citizenship"}, ["Immigration Law", "Immigration"]),
+        ({"employment", "employee", "employer", "termination", "severance"}, ["Employment Law", "Labor And Employment"]),
+        ({"lease", "property", "real", "purchase", "sale", "closing"}, ["Real Estate Law", "Real Estate"]),
+        ({"corporate", "incorporation", "shareholder", "business", "commercial", "contract", "agreement", "nda"}, ["Business Law", "Corporate Law", "Commercial Law"]),
+        ({"trademark", "copyright", "intellectual", "license", "licensing", "ip"}, ["Intellectual Property", "IP Law"]),
+        ({"litigation", "dispute", "claim", "motion", "pleading", "court", "settlement"}, ["Litigation", "Civil Litigation"]),
+        ({"tax", "irs", "cra"}, ["Tax Law", "Tax"]),
+    ]
+    for trigger_tokens, preferred_labels in rule_map:
+        if evidence_tokens.intersection(trigger_tokens):
+            existing_candidate = find_best_existing_candidate(preferred_labels, candidate_labels)
+            if existing_candidate:
+                return existing_candidate, 0.98, "deterministic_existing_candidate"
+    return None, None, None
+
+
+def classify_clusters_to_taxonomy_levels(cluster_summary: pd.DataFrame, candidate_labels: list[str], candidate_source_map: dict[str, str] | None = None) -> pd.DataFrame:
+    cluster_summary = cluster_summary.copy()
+    cluster_summary["taxonomy_classification_input"] = cluster_summary.apply(build_taxonomy_level_classification_text, axis=1)
+    if cluster_summary.empty or not candidate_labels:
+        cluster_summary["predicted_taxonomy_level"] = "Unclassified"
+        cluster_summary["taxonomy_level_score"] = np.nan
+        cluster_summary["taxonomy_classification_method"] = "unclassified_no_valid_candidate"
+        return cluster_summary
+    try:
+        classifier = get_zero_shot_classifier()
+    except Exception as exc:
+        st.warning(
+            "Taxonomy-level classification could not run because the local classification dependency is unavailable. "
+            f"Install the required dependencies or disable this option. Error: {exc}"
+        )
+        cluster_summary["predicted_taxonomy_level"] = "Unclassified"
+        cluster_summary["taxonomy_level_score"] = np.nan
+        cluster_summary["taxonomy_classification_method"] = "unclassified_no_valid_candidate"
+        return cluster_summary
+    predicted_levels = []
+    scores = []
+    methods = []
+    for _, row in cluster_summary.iterrows():
+        label, score, method = infer_obvious_taxonomy_level(row, candidate_labels, candidate_source_map)
+        if label:
+            predicted_levels.append(label)
+            scores.append(score)
+            methods.append(method)
+            continue
+        try:
+            result = classifier(row.get("taxonomy_classification_input", ""), candidate_labels, multi_label=False)
+            predicted_levels.append(result["labels"][0])
+            scores.append(float(result["scores"][0]))
+            methods.append("zero_shot_valid_candidates")
+        except Exception:
+            predicted_levels.append("Unclassified")
+            scores.append(np.nan)
+            methods.append("unclassified_no_valid_candidate")
+    cluster_summary["predicted_taxonomy_level"] = predicted_levels
+    cluster_summary["taxonomy_level_score"] = scores
+    cluster_summary["taxonomy_classification_method"] = methods
+    return cluster_summary
+
+
+def validate_taxonomy_predictions(cluster_summary: pd.DataFrame, valid_taxonomy_labels: list[str]) -> pd.DataFrame:
+    if cluster_summary.empty or "predicted_taxonomy_level" not in cluster_summary.columns:
+        return cluster_summary
+    cluster_summary = cluster_summary.copy()
+    valid_label_set = set(valid_taxonomy_labels)
+    invalid_mask = ~cluster_summary["predicted_taxonomy_level"].isin(valid_label_set)
+    invalid_mask = invalid_mask & cluster_summary["predicted_taxonomy_level"].ne("Unclassified")
+    if invalid_mask.any():
+        cluster_summary.loc[invalid_mask, "predicted_taxonomy_level"] = "Unclassified"
+        cluster_summary.loc[invalid_mask, "taxonomy_level_score"] = np.nan
+        cluster_summary.loc[invalid_mask, "taxonomy_classification_method"] = "invalid_taxonomy_label_blocked"
     return cluster_summary
 
 
@@ -1396,6 +2129,173 @@ def choose_subcluster_count(n_matters: int) -> int:
     return 5
 
 
+def summarize_practice_area_context(cluster_df: pd.DataFrame, practice_area_col: str | None) -> dict[str, object]:
+    if not practice_area_col or practice_area_col not in cluster_df.columns or cluster_df.empty:
+        return {"practice_area_null_percentage": np.nan, "most_frequent_practice_area": ""}
+    practice_area_values = cluster_df[practice_area_col]
+    non_null_values = practice_area_values.dropna().astype(str).map(str.strip).loc[lambda s: s != ""]
+    null_mask = practice_area_values.isna() | practice_area_values.astype(str).str.strip().eq("")
+    most_frequent = non_null_values.mode().iloc[0] if not non_null_values.empty else ""
+    return {
+        "practice_area_null_percentage": round(float(null_mask.mean() * 100), 2),
+        "most_frequent_practice_area": most_frequent,
+    }
+
+
+def analyze_time_entry_keywords(value: object, top_n: int = 8) -> dict[str, list[str]]:
+    tokens = remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(value)))
+    return {
+        "top_keywords": [term for term, _ in Counter(tokens).most_common(top_n)],
+        "top_phrases": [term for term, _ in Counter(make_ngrams(tokens, 2)).most_common(top_n)],
+    }
+
+
+SUBCLUSTER_MIN_SHARE = 0.25
+SUBCLUSTER_MIN_COUNT = 3
+SUBCLUSTER_BROAD_SINGLE_TOKENS = {"child", "children", "kid", "kids"}
+
+
+def normalize_branch_text(value: object) -> str:
+    text = clean_text(value)
+    replacements = {
+        "with child": "with children",
+        "with kids": "with children",
+        "with kid": "with children",
+        "w children": "with children",
+        "w child": "with children",
+        "without child": "without children",
+        "without kids": "without children",
+        "without kid": "without children",
+        "no child": "without children",
+        "no children": "without children",
+        "no kids": "without children",
+        "no kid": "without children",
+        "parent plan": "parenting plan",
+        "parental plan": "parenting plan",
+        "parenting plans": "parenting plan",
+    }
+    for source, target in replacements.items():
+        text = re.sub(rf"\b{re.escape(source)}\b", target, text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def branch_phrase_keys_for_matter(value: object, parent_project: str) -> set[str]:
+    text = normalize_branch_text(value)
+    if not text:
+        return set()
+    parent_root = get_project_root_signal(normalize_matter_name_signature(parent_project))
+    normalized_parent_project = normalize_branch_text(parent_project)
+    normalized_parent_signature = normalize_branch_text(normalize_matter_name_signature(parent_project))
+    normalized_parent_root = normalize_branch_text(parent_root)
+    parent_tokens = set()
+    for source in [normalized_parent_project, normalized_parent_signature, normalized_parent_root]:
+        for token in tokenize_text(source):
+            parent_tokens.add(token)
+            parent_tokens.add(normalize_phrase_variant_token(token))
+
+    def is_parent_duplicate(branch_key: str) -> bool:
+        normalized_branch_key = normalize_branch_text(branch_key)
+        if not normalized_branch_key:
+            return True
+        for parent_value in [normalized_parent_project, normalized_parent_signature, normalized_parent_root]:
+            if not parent_value:
+                continue
+            if normalized_branch_key == parent_value:
+                return True
+            if f" {normalized_branch_key} " in f" {parent_value} ":
+                return True
+            if f" {parent_value} " in f" {normalized_branch_key} ":
+                return True
+        return False
+
+    branch_keys = set()
+    for phrase in ["with children", "without children", "contested", "uncontested"]:
+        if re.search(rf"\b{re.escape(phrase)}\b", text) and not is_parent_duplicate(phrase):
+            branch_keys.add(phrase)
+    tokens = [
+        normalize_phrase_variant_token(token)
+        for token in tokenize_text(text)
+        if token not in parent_tokens and token not in PROJECT_STOPWORDS and not token.isdigit() and len(token) > 2
+    ]
+    for n in [3, 2, 1]:
+        if len(tokens) < n:
+            continue
+        for index in range(len(tokens) - n + 1):
+            phrase = " ".join(tokens[index:index + n])
+            if n == 1 and phrase in SUBCLUSTER_BROAD_SINGLE_TOKENS:
+                continue
+            if is_parent_duplicate(phrase):
+                continue
+            branch_keys.add(phrase)
+    return branch_keys
+
+
+def create_keyword_subclusters(
+    cluster_df: pd.DataFrame,
+    parent_project: str,
+    matter_col: str,
+    matter_name_col: str,
+    billing_col: str,
+    min_share: float = SUBCLUSTER_MIN_SHARE,
+    min_count: int = SUBCLUSTER_MIN_COUNT,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if cluster_df.empty or matter_name_col not in cluster_df.columns:
+        return pd.DataFrame(), pd.DataFrame()
+    working = cluster_df.copy()
+    count_col = "matter_id_for_count" if "matter_id_for_count" in working.columns else matter_col
+    total_matters = max(working[count_col].nunique(), 1)
+    row_branch_keys = working[matter_name_col].apply(lambda value: branch_phrase_keys_for_matter(value, parent_project))
+    branch_to_matter_ids: dict[str, set] = {}
+    for matter_id, keys in zip(working[count_col], row_branch_keys):
+        for key in keys:
+            branch_to_matter_ids.setdefault(key, set()).add(matter_id)
+    parent_root = get_project_root_signal(normalize_matter_name_signature(parent_project))
+    candidates = []
+    for branch_key, matter_ids in branch_to_matter_ids.items():
+        if branch_key == parent_root:
+            continue
+        branch_count = len(matter_ids)
+        branch_share = branch_count / total_matters
+        if branch_count >= min_count and branch_share >= min_share:
+            candidates.append({"branch_key": branch_key, "matter_count": branch_count, "matter_share": branch_share})
+    if not candidates:
+        return pd.DataFrame(), pd.DataFrame()
+    candidates = sorted(candidates, key=lambda item: (item["matter_share"], len(item["branch_key"].split()), item["matter_count"]), reverse=True)
+
+    def assign_branch(keys: set[str]) -> str:
+        for candidate in candidates:
+            if candidate["branch_key"] in keys:
+                return candidate["branch_key"]
+        return "Other"
+
+    working["subcluster_name"] = row_branch_keys.apply(assign_branch)
+    working["subcluster_id"] = pd.Categorical(
+        working["subcluster_name"],
+        categories=[candidate["branch_key"] for candidate in candidates] + ["Other"],
+        ordered=True,
+    ).codes
+    summary_rows = []
+    for subcluster_name, sub_df in working.groupby("subcluster_name", sort=False):
+        if subcluster_name == "Other":
+            continue
+        numeric_billing = pd.to_numeric(sub_df[billing_col], errors="coerce").fillna(0)
+        candidate_data = next(candidate for candidate in candidates if candidate["branch_key"] == subcluster_name)
+        summary_rows.append({
+            "subcluster_id": int(sub_df["subcluster_id"].iloc[0]),
+            "subcluster_name": subcluster_name,
+            "display_label": subcluster_name,
+            "matter_count": sub_df[count_col].nunique(),
+            "matter_share": candidate_data["matter_share"],
+            "total_billing": numeric_billing.sum(),
+            "avg_billing": numeric_billing.mean(),
+            "top_terms": ", ".join(get_top_terms_from_text(sub_df[matter_name_col], ngram_n=1, top_n=10)),
+            "top_bigrams": ", ".join(get_top_terms_from_text(sub_df[matter_name_col], ngram_n=2, top_n=10)),
+            "example_matter_names": format_examples(sub_df[matter_name_col], n=10),
+        })
+    summary = pd.DataFrame(summary_rows).sort_values(["matter_share", "matter_count"], ascending=[False, False])
+    return summary, working
+
+
 def create_project_clusters(
     df: pd.DataFrame,
     matter_name_col: str,
@@ -1404,6 +2304,7 @@ def create_project_clusters(
     progress_bar=None,
     status_box=None,
     text_col: str | None = None,
+    practice_area_col: str | None = None,
     cluster_prefix: str = "cluster",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     working = df.copy()
@@ -1435,7 +2336,21 @@ def create_project_clusters(
     working = working[working["primary_project_text"].astype(str).str.len() >= 3].copy().reset_index(drop=True)
 
     if working.empty:
-        empty_summary_cols = [cluster_col, label_col, "matter_count", "total_billing", "avg_billing", "top_terms", "top_bigrams", "example_matter_names"]
+        empty_summary_cols = [
+            cluster_col,
+            label_col,
+            "matter_count",
+            "total_billing",
+            "avg_billing",
+            "top_terms",
+            "top_bigrams",
+            "example_matter_names",
+            "practice_area_null_percentage",
+            "most_frequent_practice_area",
+            "cluster_root_signal",
+            "cluster_root_purity",
+            "cluster_purity_note",
+        ]
         return pd.DataFrame(columns=empty_summary_cols), pd.DataFrame()
 
     count_col = "matter_id_for_count" if "matter_id_for_count" in working.columns else matter_name_col
@@ -1529,6 +2444,10 @@ def create_project_clusters(
         model = KMeans(n_clusters=k_selected, random_state=42, n_init=10)
         working[cluster_col] = model.fit_predict(X)
 
+    if cluster_prefix == "cluster":
+        working = force_flat_fee_cluster(working, cluster_col, matter_name_col)
+        working = enforce_cluster_root_purity(working, cluster_col)
+
     if progress_bar is not None:
         progress_bar.progress(65)
     if status_box is not None:
@@ -1540,13 +2459,28 @@ def create_project_clusters(
         top_terms = get_top_terms_from_text(cluster_df["primary_project_text"], ngram_n=1, top_n=10)
         top_bigrams = get_top_terms_from_text(cluster_df["primary_project_text"], ngram_n=2, top_n=10)
         raw_examples = cluster_df[matter_name_col].dropna().astype(str).tolist()
+        root_signal = (
+            cluster_df["cluster_root_signal"].dropna().astype(str).mode().iloc[0]
+            if "cluster_root_signal" in cluster_df.columns and not cluster_df["cluster_root_signal"].dropna().empty
+            else ""
+        )
+        root_purity = (
+            float((cluster_df["cluster_root_signal"] == root_signal).mean())
+            if root_signal and "cluster_root_signal" in cluster_df.columns
+            else np.nan
+        )
+        purity_notes = (
+            " | ".join(cluster_df["cluster_purity_note"].dropna().astype(str).loc[lambda s: s != ""].drop_duplicates().tolist())
+            if "cluster_purity_note" in cluster_df.columns
+            else ""
+        )
 
         combined_terms = ", ".join(top_terms + top_bigrams)
         combined_examples = " | ".join(raw_examples[:10])
 
-        signature_name, signature_share = dominant_signature_label(cluster_df[matter_name_col], min_share=0.35)
+        signature_name, signature_share = root_first_cluster_label(cluster_df[matter_name_col], min_share=0.35)
 
-        project_name = signature_name
+        project_name = FLAT_FEE_PROJECT_NAME if root_signal == "flat fee" else signature_name
 
         if not project_name and use_ai:
             project_name = call_ollama_project_label(top_terms + top_bigrams, raw_examples[:10])
@@ -1560,7 +2494,7 @@ def create_project_clusters(
             project_name = dominant_seed or fallback_project_name(top_terms + top_bigrams, raw_examples[:10])
 
         if not validate_cluster_label_against_examples(project_name, cluster_df[matter_name_col]):
-            fallback_signature_name, fallback_signature_share = dominant_signature_label(cluster_df[matter_name_col], min_share=0.25)
+            fallback_signature_name, fallback_signature_share = root_first_cluster_label(cluster_df[matter_name_col], min_share=0.25)
             if fallback_signature_name:
                 project_name = fallback_signature_name
                 signature_share = fallback_signature_share
@@ -1584,6 +2518,7 @@ def create_project_clusters(
         working.loc[cluster_df.index, label_col] = project_name
         working.loc[cluster_df.index, "display_label"] = display_label
         numeric_billing = pd.to_numeric(cluster_df[billing_col], errors="coerce").fillna(0)
+        practice_area_context = summarize_practice_area_context(cluster_df, practice_area_col)
 
         cluster_rows.append({
             cluster_col: cluster_id,
@@ -1596,6 +2531,11 @@ def create_project_clusters(
             "top_bigrams": ", ".join(top_bigrams),
             "example_matter_names": " | ".join(examples),
             "dominant_signature_share": signature_share,
+            "practice_area_null_percentage": practice_area_context["practice_area_null_percentage"],
+            "most_frequent_practice_area": practice_area_context["most_frequent_practice_area"],
+            "cluster_root_signal": root_signal,
+            "cluster_root_purity": root_purity,
+            "cluster_purity_note": purity_notes,
         })
 
         if progress_bar is not None:
@@ -1607,7 +2547,14 @@ def create_project_clusters(
     if status_box is not None:
         status_box.success("Clustering complete.")
 
-    cluster_summary = pd.DataFrame(cluster_rows).sort_values(["matter_count", "total_billing"], ascending=[False, False])
+    cluster_summary = pd.DataFrame(cluster_rows)
+    if not cluster_summary.empty:
+        cluster_summary["flat_fee_sort"] = cluster_summary[label_col].map(is_flat_fee_project)
+        cluster_summary = (
+            cluster_summary
+            .sort_values(["flat_fee_sort", "matter_count", "total_billing"], ascending=[True, False, False])
+            .drop(columns=["flat_fee_sort"])
+        )
     return cluster_summary, working
 
 
@@ -1826,14 +2773,29 @@ def aggregate_project_categories(cluster_summary: pd.DataFrame) -> pd.DataFrame:
         "n_clusters": ("cluster_id", "nunique"),
     }
 
-    if "predicted_practice_area" in cluster_summary.columns:
-        agg_spec["predicted_practice_area"] = (
-            "predicted_practice_area",
+    if "predicted_taxonomy_level" in cluster_summary.columns:
+        agg_spec["predicted_taxonomy_level"] = (
+            "predicted_taxonomy_level",
             lambda s: s.dropna().mode().iloc[0] if not s.dropna().empty else "Unclassified",
         )
 
-    if "practice_area_score" in cluster_summary.columns:
-        agg_spec["practice_area_score"] = ("practice_area_score", "max")
+    if "taxonomy_level_score" in cluster_summary.columns:
+        agg_spec["taxonomy_level_score"] = ("taxonomy_level_score", "max")
+
+    if "folio_verified" in cluster_summary.columns:
+        agg_spec["folio_verified"] = ("folio_verified", "max")
+
+    for folio_col in ["folio_title", "folio_description", "folio_class_id", "folio_match_method", "folio_search_url"]:
+        if folio_col in cluster_summary.columns:
+            agg_spec[folio_col] = (
+                folio_col,
+                lambda s: s.dropna().astype(str).loc[lambda values: values != ""].head(1).iloc[0]
+                if not s.dropna().astype(str).loc[lambda values: values != ""].empty
+                else "",
+            )
+
+    if "folio_match_score" in cluster_summary.columns:
+        agg_spec["folio_match_score"] = ("folio_match_score", "max")
 
     project_summary = cluster_summary.groupby("project_name", as_index=False).agg(**agg_spec)
 
@@ -1843,10 +2805,11 @@ def aggregate_project_categories(cluster_summary: pd.DataFrame) -> pd.DataFrame:
         0,
     )
 
+    project_summary["flat_fee_sort"] = project_summary["project_name"].map(is_flat_fee_project)
     return project_summary.sort_values(
-        ["total_matters", "total_billing"],
-        ascending=[False, False],
-    )
+        ["flat_fee_sort", "total_matters", "total_billing"],
+        ascending=[True, False, False],
+    ).drop(columns=["flat_fee_sort"])
 
 
 def build_project_ring_chart(project_summary: pd.DataFrame, color_map: dict[str, str]) -> go.Figure:
@@ -1906,10 +2869,11 @@ def render_project_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
         number_class = ""
         if rank <= 3:
             number_class = f" ranking-number-{rank}"
+        folio_badge = " <span class='folio-badge'>FOLIO</span>" if bool(row.get("folio_verified", False)) else ""
         
         rows.append(
             f"<div class='ranking-row'>"
-            f"<span class='ranking-name'><span class='{number_class}'>{rank}.</span> {row['project_name']}</span>"
+            f"<span class='ranking-name'><span class='{number_class}'>{rank}.</span> {row['project_name']}{folio_badge}</span>"
             f"<span class='ranking-value'>{row['total_matters']:,.0f}</span>"
             f"</div>"
         )
@@ -1924,10 +2888,14 @@ def render_project_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
 
 
 def render_revenue_ranking(project_summary: pd.DataFrame, color_map: dict[str, str] | None = None) -> None:
-    revenue_df = project_summary.sort_values("total_billing", ascending=False).reset_index(drop=True)
+    revenue_df = project_summary.copy()
+    revenue_df["flat_fee_sort"] = revenue_df["project_name"].map(is_flat_fee_project)
+    revenue_df = revenue_df.sort_values(["flat_fee_sort", "total_billing"], ascending=[True, False]).drop(columns=["flat_fee_sort"]).reset_index(drop=True)
     top_five = revenue_df.head(5).copy()
     top_total_project = revenue_df.iloc[0]["project_name"]
-    top_avg_project = project_summary.sort_values("avg_billing", ascending=False).iloc[0]["project_name"]
+    avg_df = project_summary.copy()
+    avg_df["flat_fee_sort"] = avg_df["project_name"].map(is_flat_fee_project)
+    top_avg_project = avg_df.sort_values(["flat_fee_sort", "avg_billing"], ascending=[True, False]).iloc[0]["project_name"]
 
     rows = []
     # Display top 5 by total revenue
@@ -1937,6 +2905,7 @@ def render_revenue_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
         value_class = ""
         suffix = ""
         number_class = ""
+        folio_badge = " <span class='folio-badge'>FOLIO</span>" if bool(row.get("folio_verified", False)) else ""
 
         if row["project_name"] == top_total_project:
             name_class = "ranking-bold-black"
@@ -1950,7 +2919,7 @@ def render_revenue_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
 
         rows.append(
             f"<div class='ranking-row'>"
-            f"<span class='ranking-name {name_class}'>{rank}. {row['project_name']}{suffix}</span>"
+            f"<span class='ranking-name {name_class}'>{rank}. {row['project_name']}{suffix}{folio_badge}</span>"
             f"<span class='ranking-value {value_class}'>{format_currency(row['total_billing'])}</span>"
             f"</div>"
         )
@@ -2225,12 +3194,51 @@ def build_effort_trend_chart(cluster_df: pd.DataFrame, date_col: str, granularit
 
 
 # --- Helper functions for project option labels ---
-def make_project_option_label(project_name: str, has_subprojects: bool) -> str:
-    return f"{project_name} *" if has_subprojects else project_name
+FOLIO_OPTION_SUFFIX = " · FOLIO"
+SUBPROJECT_OPTION_SUFFIX = " *"
+
+
+def make_project_option_label(project_name: str, has_subprojects: bool, folio_verified: bool = False) -> str:
+    label = str(project_name)
+    if folio_verified:
+        label = f"{label}{FOLIO_OPTION_SUFFIX}"
+    if has_subprojects:
+        label = f"{label}{SUBPROJECT_OPTION_SUFFIX}"
+    return label
 
 
 def strip_project_option_label(option_label: str) -> str:
-    return option_label.replace(" *", "")
+    return option_label.replace(SUBPROJECT_OPTION_SUFFIX, "").replace(FOLIO_OPTION_SUFFIX, "")
+
+
+def render_project_folio_header(project_name: str, project_row: pd.Series | None) -> None:
+    if project_row is None or not bool(project_row.get("folio_verified", False)):
+        return
+
+    folio_title = str(project_row.get("folio_title", "") or "").strip()
+    folio_description = str(project_row.get("folio_description", "") or "").strip()
+    folio_class_id = str(project_row.get("folio_class_id", "") or "").strip()
+    folio_score = project_row.get("folio_match_score", np.nan)
+
+    title_html = escape(folio_title or project_name)
+    description_html = escape(folio_description) if folio_description else "FOLIO matched this project name to a standardized legal ontology concept."
+    class_label = escape(folio_class_id) if folio_class_id else "FOLIO concept"
+    score_label = "" if pd.isna(folio_score) else f" · match {float(folio_score):.0%}"
+
+    st.markdown(
+        f"""
+        <div class="folio-project-header">
+            <div class="folio-project-heading">
+                <h3>{escape(project_name)}</h3>
+                <span class="folio-badge">FOLIO verified</span>
+            </div>
+            <div class="folio-project-title">{title_html}</div>
+            <div class="folio-project-description">{description_html}</div>
+            <div class="folio-project-meta">{class_label}{score_label}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 
@@ -2425,8 +3433,49 @@ with clustering_tab:
     render_low_data_warning()
 
     folio_practice_areas = load_folio_practice_areas()
+    firm_taxonomy_labels, firm_practice_area_mapping = build_firm_specific_taxonomy_labels(
+        matter_df=matter_df,
+        practice_area_col=practice_area_col,
+        folio_labels=folio_practice_areas,
+    )
+    taxonomy_candidate_source_map = build_taxonomy_candidate_source_map(
+        firm_taxonomy_labels,
+        firm_practice_area_mapping,
+    )
 
-    control_cols = st.columns((1.15, 1.15, 0.9, 1))
+    suspicious_taxonomy_terms = ["general", "issues", "misc", "other", "unknown", "case", "matter"]
+    suspicious_firm_labels = []
+    if not firm_practice_area_mapping.empty:
+        retained_firm_rows = firm_practice_area_mapping[firm_practice_area_mapping["action"] == "kept_firm_specific"]
+        suspicious_firm_labels = (
+            retained_firm_rows[
+                retained_firm_rows["final_taxonomy_label"]
+                .astype(str)
+                .str.lower()
+                .apply(lambda value: any(term in value for term in suspicious_taxonomy_terms))
+            ]["final_taxonomy_label"]
+            .drop_duplicates()
+            .tolist()
+        )
+
+    with st.expander("Taxonomy label source debug"):
+        st.write(f"Detected practice_area column: {practice_area_col or 'None'}")
+        if practice_area_col and practice_area_col in matter_df.columns:
+            st.caption("Unique raw practice_area values from uploaded CSV")
+            st.write(matter_df[practice_area_col].drop_duplicates().tolist())
+        else:
+            st.caption("No practice_area column was detected in the uploaded CSV.")
+        st.caption("Practice-area source mapping")
+        if firm_practice_area_mapping.empty:
+            st.write("No uploaded practice_area values were available for mapping.")
+        else:
+            st.dataframe(firm_practice_area_mapping, use_container_width=True, hide_index=True)
+        if suspicious_firm_labels:
+            st.warning("Suspicious firm-specific taxonomy labels remain: " + ", ".join(suspicious_firm_labels))
+        st.caption(f"Final valid taxonomy labels used for classification: {len(firm_taxonomy_labels):,}")
+        st.write(", ".join(firm_taxonomy_labels) if firm_taxonomy_labels else "None")
+
+    control_cols = st.columns((1.05, 1.05, 1.05, 0.85, 1))
     with control_cols[0]:
         use_ai = st.toggle(
             "Use AI labels with Ollama",
@@ -2434,19 +3483,26 @@ with clustering_tab:
             help="When enabled, the app asks local Ollama to name each cluster. If Ollama fails, it falls back to TF-IDF terms.",
         )
     with control_cols[1]:
-        classify_practice_areas = st.toggle(
-            "Classify practice areas",
-            value=bool(folio_practice_areas),
-            disabled=not bool(folio_practice_areas),
-            help="Uses the FOLIO practice area CSV and Hugging Face zero-shot classification to assign each project cluster to a broad practice area.",
+        classify_taxonomy_levels = st.toggle(
+            "Classify taxonomy level",
+            value=bool(firm_taxonomy_labels),
+            disabled=not bool(firm_taxonomy_labels),
+            help="Compares each project cluster against FOLIO practice areas plus this firm's non-colliding practice_area values.",
         )
     with control_cols[2]:
-        run_clustering = st.button("Run cluster analysis", type="primary")
+        enrich_with_folio = st.toggle(
+            "Enrich with FOLIO",
+            value=True,
+            help="Calls the public FOLIO API with each project name and displays verified ontology context when a match is found.",
+        )
     with control_cols[3]:
-        if folio_practice_areas:
-            st.caption(f"Loaded {len(folio_practice_areas):,.0f} FOLIO practice areas.")
+        run_clustering = st.button("Run cluster analysis", type="primary")
+    with control_cols[4]:
+        if firm_taxonomy_labels:
+            n_firm_specific = int((firm_practice_area_mapping["action"] == "kept_firm_specific").sum()) if not firm_practice_area_mapping.empty else 0
+            st.caption(f"Using {len(firm_taxonomy_labels):,.0f} taxonomy labels; {n_firm_specific:,.0f} firm-specific.")
         else:
-            st.caption("No FOLIO practice area CSV found.")
+            st.caption("No taxonomy labels available.")
 
     if use_ai:
         st.info("AI labeling requires Ollama running locally at http://localhost:11434 and the llama3.1:8b model pulled.")
@@ -2455,6 +3511,10 @@ with clustering_tab:
         st.session_state.pop("cluster_summary", None)
         st.session_state.pop("clustered_matters", None)
         st.session_state.pop("subclusters_by_cluster", None)
+        st.session_state.pop("firm_practice_area_mapping", None)
+        st.session_state.pop("firm_taxonomy_labels", None)
+        st.session_state.pop("taxonomy_candidate_source_map", None)
+        st.session_state.pop("enrich_with_folio", None)
 
         progress_bar = st.progress(0)
         status_box = st.empty()
@@ -2467,27 +3527,45 @@ with clustering_tab:
                 use_ai=use_ai,
                 progress_bar=progress_bar,
                 status_box=status_box,
+                practice_area_col=practice_area_col,
             )
 
         if cluster_summary.empty:
             st.error("No clusters could be created. Check that the file has usable matter names.")
         else:
-            if classify_practice_areas:
-                with st.spinner("Classifying project clusters into FOLIO practice areas..."):
-                    cluster_summary = classify_clusters_to_practice_areas(cluster_summary, folio_practice_areas)
+            if classify_taxonomy_levels:
+                with st.spinner("Classifying clusters into taxonomy levels..."):
+                    cluster_summary = classify_clusters_to_taxonomy_levels(
+                        cluster_summary,
+                        firm_taxonomy_labels,
+                        taxonomy_candidate_source_map,
+                    )
+                    cluster_summary = validate_taxonomy_predictions(cluster_summary, firm_taxonomy_labels)
+
+            if enrich_with_folio:
+                with st.spinner("Checking project names against FOLIO..."):
+                    cluster_summary = enrich_clusters_with_folio(cluster_summary)
 
             clustered_matters = add_numeric_columns(clustered_matters, billing_col, hours_col, rate_col, entries_col, users_col)
 
-            if "predicted_practice_area" in cluster_summary.columns:
-                practice_area_lookup = cluster_summary.set_index("cluster_id")["predicted_practice_area"].to_dict()
-                clustered_matters["predicted_practice_area"] = (
-                    clustered_matters["cluster_id"].map(practice_area_lookup).fillna("Unclassified")
+            if "predicted_taxonomy_level" in cluster_summary.columns:
+                taxonomy_lookup = cluster_summary.set_index("project_name")["predicted_taxonomy_level"].to_dict()
+                taxonomy_score_lookup = cluster_summary.set_index("project_name")["taxonomy_level_score"].to_dict()
+                taxonomy_method_lookup = cluster_summary.set_index("project_name")["taxonomy_classification_method"].to_dict()
+                clustered_matters["predicted_taxonomy_level"] = (
+                    clustered_matters["project_name"].map(taxonomy_lookup).fillna("Unclassified")
                 )
+                clustered_matters["taxonomy_level_score"] = clustered_matters["project_name"].map(taxonomy_score_lookup)
+                clustered_matters["taxonomy_classification_method"] = clustered_matters["project_name"].map(taxonomy_method_lookup)
 
             st.session_state["cluster_summary"] = cluster_summary
             st.session_state["clustered_matters"] = clustered_matters
             st.session_state["use_ai"] = use_ai
-            st.session_state["classify_practice_areas"] = classify_practice_areas
+            st.session_state["classify_taxonomy_levels"] = classify_taxonomy_levels
+            st.session_state["firm_practice_area_mapping"] = firm_practice_area_mapping
+            st.session_state["firm_taxonomy_labels"] = firm_taxonomy_labels
+            st.session_state["taxonomy_candidate_source_map"] = taxonomy_candidate_source_map
+            st.session_state["enrich_with_folio"] = enrich_with_folio
 
     if "cluster_summary" not in st.session_state or "clustered_matters" not in st.session_state:
         st.info("Run the cluster analysis to see project names, charts, and cluster details.")
@@ -2495,6 +3573,19 @@ with clustering_tab:
 
     cluster_summary = st.session_state["cluster_summary"]
     clustered_matters = st.session_state["clustered_matters"]
+
+    if "predicted_taxonomy_level" in cluster_summary.columns:
+        cluster_summary = validate_taxonomy_predictions(cluster_summary, firm_taxonomy_labels)
+        taxonomy_lookup = cluster_summary.set_index("project_name")["predicted_taxonomy_level"].to_dict()
+        taxonomy_score_lookup = cluster_summary.set_index("project_name")["taxonomy_level_score"].to_dict()
+        taxonomy_method_lookup = cluster_summary.set_index("project_name")["taxonomy_classification_method"].to_dict()
+        clustered_matters["predicted_taxonomy_level"] = (
+            clustered_matters["project_name"].map(taxonomy_lookup).fillna("Unclassified")
+        )
+        clustered_matters["taxonomy_level_score"] = clustered_matters["project_name"].map(taxonomy_score_lookup)
+        clustered_matters["taxonomy_classification_method"] = clustered_matters["project_name"].map(taxonomy_method_lookup)
+        st.session_state["cluster_summary"] = cluster_summary
+        st.session_state["clustered_matters"] = clustered_matters
 
     actual_clustered_count = (
         clustered_matters["matter_id_for_count"].nunique()
@@ -2536,13 +3627,17 @@ with clustering_tab:
     project_options_df = project_summary.copy()
     project_options_df["has_subprojects"] = project_options_df["project_name"].isin(subproject_candidate_projects)
     project_options_df["option_label"] = project_options_df.apply(
-        lambda row: make_project_option_label(row["project_name"], row["has_subprojects"]),
+        lambda row: make_project_option_label(
+            row["project_name"],
+            row["has_subprojects"],
+            bool(row.get("folio_verified", False)),
+        ),
         axis=1,
     )
 
-    if "predicted_practice_area" in project_options_df.columns:
-        practice_area_options = ["All Practice Areas"] + (
-            project_options_df["predicted_practice_area"]
+    if "predicted_taxonomy_level" in project_options_df.columns:
+        practice_area_options = ["All Taxonomy Levels"] + (
+            project_options_df["predicted_taxonomy_level"]
             .dropna()
             .astype(str)
             .drop_duplicates()
@@ -2550,23 +3645,23 @@ with clustering_tab:
             .tolist()
         )
     else:
-        practice_area_options = ["All Practice Areas"]
+        practice_area_options = ["All Taxonomy Levels"]
 
     with detail_controls[0]:
-        selected_practice_area = st.selectbox(
-            "Practice Area",
+        selected_taxonomy_level = st.selectbox(
+            "Taxonomy Level",
             options=practice_area_options,
             index=0,
-            key="practice_area_detail_selector",
+            key="taxonomy_level_detail_selector",
         )
 
-    if selected_practice_area != "All Practice Areas" and "predicted_practice_area" in project_options_df.columns:
+    if selected_taxonomy_level != "All Taxonomy Levels" and "predicted_taxonomy_level" in project_options_df.columns:
         project_options_df = project_options_df[
-            project_options_df["predicted_practice_area"] == selected_practice_area
+            project_options_df["predicted_taxonomy_level"] == selected_taxonomy_level
         ].copy()
 
     if project_options_df.empty:
-        st.warning("No projects available for the selected practice area.")
+        st.warning("No projects available for the selected taxonomy level.")
         st.stop()
 
     with detail_controls[1]:
@@ -2580,36 +3675,38 @@ with clustering_tab:
     selected_project = strip_project_option_label(selected_project_option)
     selected_cluster_df = clustered_matters[clustered_matters["project_name"] == selected_project].copy()
     selected_project_color = project_color_map.get(selected_project, ALTFEE_GRAY)
+    selected_project_rows = project_summary[project_summary["project_name"] == selected_project]
+    selected_project_row = selected_project_rows.iloc[0] if not selected_project_rows.empty else None
 
-    if "predicted_practice_area" in project_summary.columns:
-        selected_practice_area_value = (
+    render_project_folio_header(selected_project, selected_project_row)
+
+    if "predicted_taxonomy_level" in project_summary.columns:
+        selected_taxonomy_value = (
             project_summary.loc[
                 project_summary["project_name"] == selected_project,
-                "predicted_practice_area",
+                "predicted_taxonomy_level",
             ]
             .dropna()
             .astype(str)
             .head(1)
         )
-        if not selected_practice_area_value.empty:
-            st.caption(f"Practice area: {selected_practice_area_value.iloc[0]}")
+        if not selected_taxonomy_value.empty:
+            st.caption(f"Taxonomy level: {selected_taxonomy_value.iloc[0]}")
 
     selected_cluster_size = selected_cluster_df["matter_id_for_count"].nunique()
-    subcluster_text_source = time_entry_text_col if time_entry_text_col else matter_name_col
 
     if "subclusters_by_cluster" not in st.session_state:
         st.session_state["subclusters_by_cluster"] = {}
 
     subcluster_key = selected_project
-    if selected_cluster_size >= 50 and subcluster_key not in st.session_state["subclusters_by_cluster"]:
-        with st.spinner("Creating sub-projects..."):
-            subcluster_summary_auto, subclustered_matters_auto = create_project_clusters(
+    if selected_cluster_size >= SUBCLUSTER_MIN_COUNT and subcluster_key not in st.session_state["subclusters_by_cluster"]:
+        with st.spinner("Creating keyword branches..."):
+            subcluster_summary_auto, subclustered_matters_auto = create_keyword_subclusters(
                 selected_cluster_df,
+                parent_project=selected_project,
+                matter_col=matter_col,
                 matter_name_col=matter_name_col,
                 billing_col=billing_col,
-                use_ai=st.session_state.get("use_ai", False),
-                text_col=subcluster_text_source,
-                cluster_prefix="subcluster",
             )
             if not subcluster_summary_auto.empty:
                 subclustered_matters_auto = add_numeric_columns(subclustered_matters_auto, billing_col, hours_col, rate_col, entries_col, users_col)
@@ -2749,4 +3846,32 @@ with clustering_tab:
         else:
             clean_examples = clean_examples.sort_values(billing_col, ascending=False)
 
-        st.dataframe(clean_examples.head(12), use_container_width=True, hide_index=True)
+        top_examples = clean_examples.head(12)
+        st.dataframe(top_examples, use_container_width=True, hide_index=True)
+
+        if time_entry_text_col and time_entry_text_col in selected_cluster_df.columns and not top_examples.empty:
+            st.markdown("#### Time Entry Keyword Analysis")
+            option_lookup = {}
+            for option_number, (row_index, row) in enumerate(selected_cluster_df.loc[top_examples.index].iterrows(), 1):
+                matter_name = str(row.get(matter_name_col, "")).strip() or "Unnamed matter"
+                matter_id = str(row.get(matter_col, "")).strip()
+                option_label = f"{option_number}. {matter_name} ({matter_id})" if matter_id else f"{option_number}. {matter_name}"
+                option_lookup[option_label] = row_index
+
+            selected_example_label = st.selectbox(
+                "Select an example matter",
+                options=list(option_lookup.keys()),
+                key=f"time_entry_keyword_selector_{clean_column_name(selected_project)}",
+            )
+            selected_example_row = selected_cluster_df.loc[option_lookup[selected_example_label]]
+            keyword_analysis = analyze_time_entry_keywords(selected_example_row.get(time_entry_text_col))
+
+            keyword_cols = st.columns(2)
+            with keyword_cols[0]:
+                st.caption("Top keywords")
+                st.write(", ".join(keyword_analysis["top_keywords"]) if keyword_analysis["top_keywords"] else "No usable keywords found.")
+            with keyword_cols[1]:
+                st.caption("Top phrases")
+                st.write(", ".join(keyword_analysis["top_phrases"]) if keyword_analysis["top_phrases"] else "No usable phrases found.")
+        elif not time_entry_text_col:
+            st.caption("No time-entry text column was detected for keyword analysis.")
