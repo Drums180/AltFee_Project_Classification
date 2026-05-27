@@ -8,12 +8,15 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from collections import Counter
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 from sklearn.metrics import silhouette_score
 
+
+APP_VERSION = "taxonomy_rebuild_2026_05_27_v2"
 
 st.set_page_config(
     page_title="Historical Matter Dashboard",
@@ -231,6 +234,30 @@ OPTIONAL_COLUMN_OPTIONS = {
     "all_time_entry_text": ["all_time_entry_text", "activity_text", "activity_text_description", "time_entry_text"],
 }
 
+REQUIRED_EXPORT_CLASSIFICATION_COLUMNS = [
+    "raw_practice_area",
+    "clean_practice_area",
+    "folio_practice_area",
+    "folio_match_score",
+    "folio_match_status",
+    "taxonomy_level",
+    "taxonomy_level_source",
+    "predicted_project_type",
+    "project_label_source",
+    "classification_confidence",
+    "classification_method",
+    "debug_notes",
+    "app_version",
+    "classified_at",
+]
+
+OPTIONAL_EXPORT_CLASSIFICATION_COLUMNS = [
+    "rule_project_type",
+    "rule_project_confidence",
+    "rule_project_reason",
+    "rule_matched_keywords",
+]
+
 
 @st.cache_data(show_spinner=False)
 def load_csv(uploaded_file) -> pd.DataFrame:
@@ -247,6 +274,587 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     cleaned = df.copy()
     cleaned.columns = [clean_column_name(col) for col in cleaned.columns]
     return cleaned
+
+
+def normalize_taxonomy_text(value) -> str | None:
+    if pd.isna(value):
+        return None
+
+    normalized = str(value).strip().lower().replace("&", " and ")
+    normalized = re.sub(r"[^a-z0-9\s]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized or None
+
+
+def detect_practice_area_reference_column(df: pd.DataFrame) -> str | None:
+    for column in ["practice_area", "folio_practice_area", "standard_practice_area", "name"]:
+        if column in df.columns:
+            return column
+    return None
+
+
+def detect_folio_reference_column(df: pd.DataFrame) -> str | None:
+    for column in ["folio_practice_area", "standard_practice_area", "practice_area", "name"]:
+        if column in df.columns:
+            return column
+    return None
+
+
+def read_uploaded_or_path_csv(uploaded_file=None, default_path: str | None = None) -> tuple[pd.DataFrame, dict]:
+    metadata = {
+        "source": "none",
+        "source_label": "Not loaded",
+        "source_rows": 0,
+        "error_message": None,
+    }
+
+    try:
+        if uploaded_file is not None:
+            uploaded_file.seek(0)
+            metadata["source"] = "uploaded"
+            metadata["source_label"] = uploaded_file.name
+            df = pd.read_csv(uploaded_file)
+        elif default_path:
+            default_candidate = Path(default_path)
+            if not default_candidate.exists():
+                default_candidate = get_repo_root() / default_path
+
+            if default_candidate.exists():
+                metadata["source"] = "default_path"
+                metadata["source_label"] = str(default_candidate)
+                df = pd.read_csv(default_candidate)
+            else:
+                df = pd.DataFrame()
+        else:
+            df = pd.DataFrame()
+    except Exception as exc:
+        df = pd.DataFrame()
+        metadata["error_message"] = str(exc)[:180]
+
+    metadata["source_rows"] = len(df)
+    return df, metadata
+
+
+def load_approved_practice_areas(
+    uploaded_file=None,
+    default_path: str = "data/folio_practice_areas.csv",
+) -> pd.DataFrame:
+    reference_df, metadata = read_uploaded_or_path_csv(uploaded_file, default_path)
+
+    detected_column = None
+    if not reference_df.empty:
+        reference_df = normalize_columns(reference_df)
+        detected_column = detect_practice_area_reference_column(reference_df)
+
+    if detected_column:
+        approved_df = pd.DataFrame({
+            "approved_practice_area_raw": reference_df[detected_column],
+        })
+        approved_df["approved_practice_area_clean"] = approved_df["approved_practice_area_raw"].map(normalize_taxonomy_text)
+        approved_df = (
+            approved_df.dropna(subset=["approved_practice_area_clean"])
+            .drop_duplicates(subset=["approved_practice_area_clean"])
+            .sort_values("approved_practice_area_clean")
+            .reset_index(drop=True)
+        )
+    else:
+        approved_df = pd.DataFrame(columns=["approved_practice_area_raw", "approved_practice_area_clean"])
+
+    approved_df.attrs["source"] = metadata["source"]
+    approved_df.attrs["source_label"] = metadata["source_label"]
+    approved_df.attrs["source_rows"] = metadata["source_rows"]
+    approved_df.attrs["detected_column"] = detected_column
+    approved_df.attrs["error_message"] = metadata["error_message"]
+    return approved_df
+
+
+def prepare_folio_reference(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["folio_practice_area_raw", "folio_practice_area_clean"])
+
+    working = normalize_columns(df)
+    detected_column = detect_folio_reference_column(working)
+    if not detected_column:
+        return pd.DataFrame(columns=["folio_practice_area_raw", "folio_practice_area_clean"])
+
+    folio_df = pd.DataFrame({
+        "folio_practice_area_raw": working[detected_column],
+    })
+    folio_df["folio_practice_area_clean"] = folio_df["folio_practice_area_raw"].map(normalize_taxonomy_text)
+    folio_df = (
+        folio_df.dropna(subset=["folio_practice_area_clean"])
+        .drop_duplicates(subset=["folio_practice_area_clean"])
+        .sort_values("folio_practice_area_clean")
+        .reset_index(drop=True)
+    )
+    return folio_df
+
+
+def load_local_folio_reference(
+    uploaded_file=None,
+    fallback_uploaded_file=None,
+    default_path: str = "../data/practice_areas/folio_practice_areas.csv",
+) -> pd.DataFrame:
+    reference_file = uploaded_file if uploaded_file is not None else fallback_uploaded_file
+    reference_df, metadata = read_uploaded_or_path_csv(reference_file, None if reference_file is not None else default_path)
+
+    detected_column = None
+    if not reference_df.empty:
+        normalized_reference_df = normalize_columns(reference_df)
+        detected_column = detect_folio_reference_column(normalized_reference_df)
+        folio_df = prepare_folio_reference(reference_df)
+    else:
+        folio_df = prepare_folio_reference(reference_df)
+
+    folio_df.attrs["source"] = metadata["source"]
+    folio_df.attrs["source_label"] = metadata["source_label"]
+    folio_df.attrs["source_rows"] = metadata["source_rows"]
+    folio_df.attrs["detected_column"] = detected_column
+    folio_df.attrs["error_message"] = metadata["error_message"]
+    return folio_df
+
+
+def map_to_folio_practice_area(clean_practice_area, folio_reference_df: pd.DataFrame) -> tuple[object, float, str]:
+    clean_value = normalize_taxonomy_text(clean_practice_area)
+    if not clean_value:
+        return None, 0, "no_input"
+
+    if folio_reference_df is None or folio_reference_df.empty:
+        return None, 0, "no_reference"
+
+    exact_matches = folio_reference_df[folio_reference_df["folio_practice_area_clean"] == clean_value]
+    if len(exact_matches) == 1:
+        return exact_matches.iloc[0]["folio_practice_area_raw"], 1.0, "normalized_exact_match"
+    if len(exact_matches) > 1:
+        return None, 1.0, "ambiguous_match"
+
+    candidates = []
+    for _, row in folio_reference_df.iterrows():
+        candidate_clean = row["folio_practice_area_clean"]
+        score = SequenceMatcher(None, clean_value, candidate_clean).ratio()
+        candidates.append((score, row["folio_practice_area_raw"]))
+
+    if not candidates:
+        return None, 0, "no_reference"
+
+    candidates = sorted(candidates, key=lambda candidate: candidate[0], reverse=True)
+    best_score, best_raw = candidates[0]
+    second_score = candidates[1][0] if len(candidates) > 1 else 0
+    score_gap = best_score - second_score
+
+    if best_score >= 0.90 and score_gap >= 0.05:
+        return best_raw, float(best_score), "fuzzy_match"
+    if best_score >= 0.90:
+        return None, float(best_score), "ambiguous_match"
+    return None, float(best_score), "no_match"
+
+
+def build_project_classification_text(row) -> str:
+    evidence_fields = [
+        "matter_name",
+        "name",
+        "matter_description",
+        "description",
+        "matter_category",
+        "category",
+        "raw_practice_area",
+        "clean_practice_area",
+        "activity_text",
+        "activity_text_description",
+        "activity_description",
+    ]
+    values = []
+    for field in evidence_fields:
+        if field not in row.index:
+            continue
+        value = row.get(field)
+        if pd.isna(value):
+            continue
+        text = str(value).strip().lower()
+        if text:
+            values.append(text)
+
+    raw_text = " ".join(values)
+    searchable_text = re.sub(r"[^a-z0-9\s]+", " ", raw_text)
+    searchable_text = re.sub(r"\s+", " ", searchable_text).strip()
+    return f"{raw_text} {searchable_text}".strip()
+
+
+def find_project_rule_keywords(text: str, keywords: list[str]) -> list[str]:
+    matched = []
+    for keyword in keywords:
+        keyword_text = keyword.lower()
+        if re.fullmatch(r"[a-z0-9]+", keyword_text):
+            pattern = rf"\b{re.escape(keyword_text)}\b"
+            is_match = re.search(pattern, text) is not None
+        else:
+            is_match = keyword_text in text
+        if is_match:
+            matched.append(keyword)
+    return matched
+
+
+def make_project_rule_result(
+    project_type: str | None,
+    confidence: str,
+    reason: str,
+    matched_keywords: list[str] | None = None,
+) -> dict:
+    return {
+        "rule_project_type": project_type,
+        "rule_project_confidence": confidence,
+        "rule_project_reason": reason,
+        "rule_matched_keywords": ", ".join(matched_keywords or []),
+    }
+
+
+def rule_based_project_classifier(row) -> dict:
+    text = build_project_classification_text(row)
+    if not text:
+        return make_project_rule_result(None, "none", "No rule matched.")
+
+    divorce_terms = ["divorce", "dissolution", "marriage dissolution"]
+    no_children_terms = ["without children", "no children", "no minor children", "without child"]
+    child_terms = ["child", "children", "custody", "parenting", "parenting plan", "child support", "spousal support", "minor"]
+    divorce_matches = find_project_rule_keywords(text, divorce_terms)
+    if divorce_matches:
+        no_children_matches = find_project_rule_keywords(text, no_children_terms)
+        if no_children_matches:
+            return make_project_rule_result(
+                "Divorce without Children",
+                "high",
+                "Divorce terms plus explicit no-children terms detected.",
+                divorce_matches + no_children_matches,
+            )
+
+        child_matches = find_project_rule_keywords(text, child_terms)
+        if child_matches:
+            return make_project_rule_result(
+                "Divorce with Children",
+                "high",
+                "Divorce terms plus child/parenting/custody/support terms detected.",
+                divorce_matches + child_matches,
+            )
+
+        return make_project_rule_result(
+            "Divorce / Marriage Dissolution",
+            "medium",
+            "Divorce terms detected but child-related evidence was unclear.",
+            divorce_matches,
+        )
+
+    rule_definitions = [
+        (
+            "NDA / MNDA",
+            "high",
+            "NDA, MNDA, non-disclosure, or confidentiality agreement terms detected.",
+            ["nda", "mnda", "non disclosure", "non-disclosure", "confidentiality agreement"],
+        ),
+        (
+            "Lease Review",
+            "high",
+            "Lease review or lease agreement terms detected.",
+            ["lease review", "commercial lease", "residential lease", "review lease", "lease agreement"],
+        ),
+        (
+            "Company Incorporation",
+            "high",
+            "Company incorporation or formation terms detected.",
+            ["incorporation", "incorporate", "company formation", "corporation setup", "articles of incorporation"],
+        ),
+        (
+            "Shareholders Agreement",
+            "high",
+            "Shareholder agreement terms detected.",
+            ["shareholders agreement", "shareholder agreement", "usa agreement", "unanimous shareholder agreement"],
+        ),
+        (
+            "Independent Contractor Agreement",
+            "high",
+            "Independent contractor, consulting, or service provider agreement terms detected.",
+            ["independent contractor agreement", "contractor agreement", "consulting agreement", "service provider agreement"],
+        ),
+        (
+            "Employment Agreement / Termination",
+            "high",
+            "Employment agreement, offer, termination, severance, or employment contract terms detected.",
+            ["employment agreement", "employment contract", "offer letter", "termination agreement", "severance agreement"],
+        ),
+    ]
+
+    for project_type, confidence, reason, keywords in rule_definitions:
+        matches = find_project_rule_keywords(text, keywords)
+        if matches:
+            return make_project_rule_result(project_type, confidence, reason, matches)
+
+    estate_terms = ["will", "wills", "estate plan", "estate planning", "power of attorney", "poa", "probate"]
+    estate_matches = find_project_rule_keywords(text, estate_terms)
+    if estate_matches:
+        confidence = "high" if any(keyword in estate_matches for keyword in ["probate", "power of attorney", "poa"]) else "medium"
+        return make_project_rule_result(
+            "Estate Planning / Probate",
+            confidence,
+            "Estate planning, probate, will, or power of attorney terms detected.",
+            estate_matches,
+        )
+
+    real_estate_terms = ["purchase agreement", "sale agreement", "real estate transaction", "closing", "conveyance", "property transfer"]
+    real_estate_matches = find_project_rule_keywords(text, real_estate_terms)
+    if real_estate_matches:
+        confidence = "high" if any(keyword in real_estate_matches for keyword in ["real estate transaction", "conveyance", "property transfer"]) else "medium"
+        return make_project_rule_result(
+            "Real Estate Transaction",
+            confidence,
+            "Real estate transaction, closing, purchase, sale, conveyance, or property transfer terms detected.",
+            real_estate_matches,
+        )
+
+    litigation_terms = ["litigation", "lawsuit", "statement of claim", "claim defense", "pleading", "motion", "discovery"]
+    litigation_matches = find_project_rule_keywords(text, litigation_terms)
+    if litigation_matches:
+        return make_project_rule_result(
+            "Litigation Matter",
+            "medium",
+            "Litigation, lawsuit, pleading, motion, discovery, or claim terms detected.",
+            litigation_matches,
+        )
+
+    return make_project_rule_result(None, "none", "No rule matched.")
+
+
+def add_classification_taxonomy_columns(
+    clustered_matters: pd.DataFrame,
+    practice_area_col: str | None,
+    approved_taxonomy_levels: set[str] | None = None,
+    folio_reference_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    working = clustered_matters.copy()
+    approved_taxonomy_levels = approved_taxonomy_levels or set()
+
+    if practice_area_col and practice_area_col in working.columns:
+        working["raw_practice_area"] = working[practice_area_col].where(working[practice_area_col].notna(), None)
+    else:
+        working["raw_practice_area"] = None
+
+    working["clean_practice_area"] = working["raw_practice_area"].map(normalize_taxonomy_text)
+
+    rule_results = working.apply(rule_based_project_classifier, axis=1, result_type="expand")
+    for column in ["rule_project_type", "rule_project_confidence", "rule_project_reason", "rule_matched_keywords"]:
+        working[column] = rule_results[column]
+
+    has_rule_project_type = working["rule_project_type"].notna() & working["rule_project_confidence"].isin(["high", "medium"])
+    if "project_name" in working.columns:
+        has_cluster_project_name = working["project_name"].notna()
+        cluster_project_name = working["project_name"]
+    else:
+        has_cluster_project_name = pd.Series(False, index=working.index)
+        cluster_project_name = pd.Series(None, index=working.index)
+
+    working["predicted_project_type"] = np.select(
+        [has_rule_project_type, has_cluster_project_name],
+        [working["rule_project_type"], cluster_project_name],
+        default=None,
+    )
+    working["project_label_source"] = np.select(
+        [has_rule_project_type, has_cluster_project_name],
+        ["rule_based", "cluster_generated"],
+        default="none",
+    )
+    working["classification_method"] = np.select(
+        [has_rule_project_type, has_cluster_project_name],
+        ["rule_based_project_classifier", "kmeans_cluster_label"],
+        default="none",
+    )
+    working["classification_confidence"] = np.select(
+        [has_rule_project_type, has_cluster_project_name],
+        [working["rule_project_confidence"], "low"],
+        default="none",
+    )
+
+    folio_matches = working["clean_practice_area"].apply(
+        lambda value: map_to_folio_practice_area(value, folio_reference_df)
+    )
+    working["folio_practice_area"] = folio_matches.map(lambda match: match[0])
+    working["folio_match_score"] = folio_matches.map(lambda match: match[1])
+    working["folio_match_status"] = folio_matches.map(lambda match: match[2])
+
+    has_clean_practice_area = working["clean_practice_area"].notna()
+    has_folio_practice_area = working["folio_practice_area"].notna()
+    is_approved_practice_area = working["clean_practice_area"].isin(approved_taxonomy_levels)
+
+    working["taxonomy_level"] = np.select(
+        [
+            has_folio_practice_area,
+            has_clean_practice_area & is_approved_practice_area,
+        ],
+        [
+            working["folio_practice_area"].map(normalize_taxonomy_text),
+            working["clean_practice_area"],
+        ],
+        default=None,
+    )
+    working["taxonomy_level_source"] = np.select(
+        [
+            has_folio_practice_area,
+            has_clean_practice_area & is_approved_practice_area,
+            has_clean_practice_area & ~is_approved_practice_area,
+        ],
+        [
+            "folio_reference",
+            "approved_practice_area_csv",
+            "unapproved_raw_practice_area",
+        ],
+        default="none",
+    )
+
+    base_debug_note = (
+        "predicted_project_type is cluster-generated; taxonomy_level was assigned only from local FOLIO or approved raw practice area values."
+    )
+    working["debug_notes"] = base_debug_note
+    working.loc[working["folio_match_status"] == "normalized_exact_match", "debug_notes"] = (
+        base_debug_note + " FOLIO match found by normalized exact match."
+    )
+    working.loc[working["folio_match_status"] == "fuzzy_match", "debug_notes"] = (
+        base_debug_note + " FOLIO match found by fuzzy match."
+    )
+    working.loc[~has_folio_practice_area & is_approved_practice_area, "debug_notes"] = (
+        base_debug_note + " No FOLIO match; taxonomy assigned from approved practice area CSV."
+    )
+    working.loc[~has_folio_practice_area & has_clean_practice_area & ~is_approved_practice_area, "debug_notes"] = (
+        base_debug_note + " No FOLIO or approved practice area match; taxonomy_level left blank. "
+        "Raw practice area was not found in approved practice area CSV."
+    )
+    working.loc[~has_folio_practice_area & ~has_clean_practice_area, "debug_notes"] = (
+        base_debug_note + " No FOLIO or approved practice area match; taxonomy_level left blank."
+    )
+    working.loc[working["project_label_source"] == "rule_based", "debug_notes"] = (
+        working.loc[working["project_label_source"] == "rule_based", "debug_notes"]
+        + " Predicted project type assigned by rule-based classifier: "
+        + working.loc[working["project_label_source"] == "rule_based", "rule_project_reason"].fillna("")
+    )
+    working.loc[working["project_label_source"] == "cluster_generated", "debug_notes"] = (
+        working.loc[working["project_label_source"] == "cluster_generated", "debug_notes"]
+        + " No high/medium-confidence rule matched; predicted project type fell back to cluster-generated project_name."
+    )
+    working.loc[working["project_label_source"] == "none", "debug_notes"] = (
+        working.loc[working["project_label_source"] == "none", "debug_notes"]
+        + " No rule or cluster project label available."
+    )
+
+    return working
+
+
+def protect_existing_classification_columns(
+    original_df: pd.DataFrame,
+    classification_column_names: list[str],
+) -> tuple[pd.DataFrame, list[str]]:
+    protected = original_df.copy()
+    renamed_columns = []
+
+    for column in classification_column_names:
+        if column not in protected.columns:
+            continue
+
+        renamed_column = f"previous_{column}"
+        suffix = 2
+        while renamed_column in protected.columns:
+            renamed_column = f"previous_{column}_{suffix}"
+            suffix += 1
+
+        protected = protected.rename(columns={column: renamed_column})
+        renamed_columns.append(f"{column} -> {renamed_column}")
+
+    return protected, renamed_columns
+
+
+def build_export_dataframe(
+    original_df: pd.DataFrame,
+    classified_df: pd.DataFrame,
+    key_candidates: list[str] | None = None,
+) -> pd.DataFrame:
+    key_candidates = key_candidates or ["matter_id", "id"]
+    classification_columns = REQUIRED_EXPORT_CLASSIFICATION_COLUMNS.copy()
+    optional_classification_columns = [
+        column for column in OPTIONAL_EXPORT_CLASSIFICATION_COLUMNS if column in classified_df.columns
+    ]
+    export_classification_columns = classification_columns + optional_classification_columns
+    classified_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    protected_original, renamed_columns = protect_existing_classification_columns(
+        original_df,
+        classification_columns + OPTIONAL_EXPORT_CLASSIFICATION_COLUMNS,
+    )
+    export_df = protected_original.copy()
+
+    classified_output = classified_df.copy()
+    classified_output["app_version"] = APP_VERSION
+    classified_output["classified_at"] = classified_at
+
+    for column in classification_columns:
+        if column not in classified_output.columns:
+            classified_output[column] = None
+
+    merge_key = "row_index"
+    warning_message = None
+    merge_key_column = None
+
+    for candidate in key_candidates:
+        if candidate in export_df.columns and candidate in classified_output.columns:
+            merge_key = candidate
+            merge_key_column = candidate
+            break
+
+    if merge_key_column:
+        classification_subset = classified_output[[merge_key_column] + export_classification_columns].copy()
+        classification_subset = classification_subset.drop_duplicates(subset=[merge_key_column], keep="first")
+        export_df = export_df.merge(classification_subset, on=merge_key_column, how="left")
+    else:
+        warning_message = "Export is using row order because no stable matter_id or id key was found."
+        classification_subset = classified_output[export_classification_columns].copy().reset_index(drop=True)
+        export_df = export_df.reset_index(drop=True)
+        export_df = pd.concat([export_df, classification_subset.reindex(export_df.index)], axis=1)
+
+    export_df.attrs["merge_key"] = merge_key
+    export_df.attrs["renamed_columns"] = renamed_columns
+    export_df.attrs["missing_required_export_columns"] = [
+        column for column in classification_columns if column not in export_df.columns
+    ]
+    export_df.attrs["warning_message"] = warning_message
+    export_df.attrs["classified_at"] = classified_at
+    return export_df
+
+
+def compute_dataframe_signature(df: pd.DataFrame, extra_values: dict | None = None) -> str:
+    extra_values = extra_values or {}
+    components = [
+        f"app_version={APP_VERSION}",
+        f"rows={len(df)}",
+        f"cols={len(df.columns)}",
+        "columns=" + "|".join(map(str, df.columns)),
+    ]
+    for key in sorted(extra_values):
+        components.append(f"{key}={extra_values[key]}")
+    return "||".join(components)
+
+
+def clear_classification_session_state() -> None:
+    stale_keys = [
+        "clustered_matters",
+        "cluster_summary",
+        "subclusters_by_cluster",
+        "classification_results",
+        "taxonomy_results",
+        "export_df",
+        "last_run_signature",
+        "last_export_signature",
+    ]
+    for key in stale_keys:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def is_classification_state_current(current_signature: str) -> bool:
+    return st.session_state.get("last_run_signature") == current_signature
 
 
 def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -1964,6 +2572,546 @@ def map_folio_matter_rows(
     return pd.DataFrame(rows)
 
 
+def render_taxonomy_debugger_tab(
+    approved_practice_areas: pd.DataFrame,
+    approved_practice_area_levels: set[str],
+    folio_reference_df: pd.DataFrame,
+    approved_taxonomy_levels: set[str],
+    current_input_signature: str,
+) -> None:
+    st.markdown("### Taxonomy Debugger")
+    st.caption("Inspect the separation between cluster-generated project labels and practice-area taxonomy output.")
+
+    source = approved_practice_areas.attrs.get("source", "none")
+    source_label = approved_practice_areas.attrs.get("source_label", "Not loaded")
+    source_rows = approved_practice_areas.attrs.get("source_rows", 0)
+    detected_column = approved_practice_areas.attrs.get("detected_column")
+    error_message = approved_practice_areas.attrs.get("error_message")
+
+    st.markdown("#### Approved Practice Area Reference")
+    if error_message:
+        st.warning(f"Approved practice area CSV could not be loaded: {error_message}")
+    elif source == "uploaded":
+        st.success("Approved practice area CSV uploaded.")
+    elif source == "default_path":
+        st.success("Approved practice area CSV loaded from default path.")
+    else:
+        st.warning("No approved practice area CSV was uploaded or found at data/folio_practice_areas.csv. Taxonomy approval validation is limited.")
+
+    if source != "none" and not detected_column:
+        st.warning("Approved practice area CSV did not contain a recognized practice area column. Taxonomy approval validation is limited.")
+
+    reference_metric_cols = st.columns(4)
+    with reference_metric_cols[0]:
+        st.metric("Source", source_label)
+    with reference_metric_cols[1]:
+        st.metric("File rows", f"{source_rows:,}")
+    with reference_metric_cols[2]:
+        st.metric("Detected column", detected_column or "None")
+    with reference_metric_cols[3]:
+        st.metric("Unique approved", f"{len(approved_practice_area_levels):,}")
+
+    st.dataframe(
+        approved_practice_areas[["approved_practice_area_raw", "approved_practice_area_clean"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    folio_source = folio_reference_df.attrs.get("source", "none")
+    folio_source_label = folio_reference_df.attrs.get("source_label", "Not loaded")
+    folio_source_rows = folio_reference_df.attrs.get("source_rows", 0)
+    folio_detected_column = folio_reference_df.attrs.get("detected_column")
+    folio_error_message = folio_reference_df.attrs.get("error_message")
+
+    st.markdown("#### Local FOLIO Reference")
+    if folio_error_message:
+        st.warning(f"Local FOLIO reference CSV could not be loaded: {folio_error_message}")
+    elif folio_source == "uploaded":
+        st.success("Local FOLIO reference CSV uploaded.")
+    elif folio_source == "default_path":
+        st.success("Local FOLIO reference loaded from default path.")
+    else:
+        st.warning("No local FOLIO reference CSV was uploaded or found. FOLIO practice area matching is limited.")
+
+    if folio_source != "none" and not folio_detected_column:
+        st.warning("Local FOLIO reference CSV did not contain a recognized FOLIO practice area column.")
+
+    folio_metric_cols = st.columns(4)
+    with folio_metric_cols[0]:
+        st.metric("FOLIO source", folio_source_label)
+    with folio_metric_cols[1]:
+        st.metric("FOLIO rows", f"{folio_source_rows:,}")
+    with folio_metric_cols[2]:
+        st.metric("Detected column", folio_detected_column or "None")
+    with folio_metric_cols[3]:
+        st.metric("Unique clean FOLIO", f"{folio_reference_df['folio_practice_area_clean'].dropna().nunique():,}")
+
+    st.dataframe(
+        folio_reference_df[["folio_practice_area_raw", "folio_practice_area_clean"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    last_run_signature = st.session_state.get("last_run_signature")
+    is_current = last_run_signature == current_input_signature
+    st.markdown("#### State Diagnostics")
+    st.write(f"Current input signature: `{current_input_signature}`")
+    st.write(f"Last run signature: `{last_run_signature or 'None'}`")
+    st.write(f"Is classification state current? {'Yes' if is_current else 'No'}")
+    st.write(f"Last manual clear timestamp: {st.session_state.get('last_manual_clear_at', 'None')}")
+
+    if "clustered_matters" not in st.session_state:
+        st.info("Run the cluster analysis to see taxonomy classification diagnostics.")
+        return
+
+    if not is_current:
+        st.warning("Stored clustering/classification results may be stale because the input file, settings, taxonomy reference, or app version changed. Please rerun clustering/classification.")
+
+    clustered_matters = add_classification_taxonomy_columns(
+        st.session_state["clustered_matters"],
+        practice_area_col=practice_area_col,
+        approved_taxonomy_levels=approved_practice_area_levels,
+        folio_reference_df=folio_reference_df,
+    )
+    if "project_name" not in clustered_matters.columns:
+        clustered_matters["project_name"] = None
+    st.session_state["clustered_matters"] = clustered_matters
+
+    row_count = len(clustered_matters)
+    unique_project_names = (
+        clustered_matters["project_name"].dropna().nunique()
+        if "project_name" in clustered_matters.columns
+        else 0
+    )
+    unique_predicted_project_types = clustered_matters["predicted_project_type"].dropna().nunique()
+    unique_taxonomy_levels = clustered_matters["taxonomy_level"].dropna().nunique()
+
+    taxonomy_values = clustered_matters["taxonomy_level"].map(normalize_taxonomy_text).fillna("")
+    project_values = (
+        clustered_matters["project_name"].map(normalize_taxonomy_text).fillna("")
+        if "project_name" in clustered_matters.columns
+        else pd.Series("", index=clustered_matters.index)
+    )
+    predicted_values = clustered_matters["predicted_project_type"].map(normalize_taxonomy_text).fillna("")
+    rule_values = clustered_matters["rule_project_type"].map(normalize_taxonomy_text).fillna("")
+    collision_mask = taxonomy_values.ne("") & (
+        taxonomy_values.eq(project_values) | taxonomy_values.eq(predicted_values) | taxonomy_values.eq(rule_values)
+    )
+    collision_rows = clustered_matters.loc[collision_mask].copy()
+
+    metric_cols = st.columns(5)
+    with metric_cols[0]:
+        st.metric("Rows", f"{row_count:,}")
+    with metric_cols[1]:
+        st.metric("Project names", f"{unique_project_names:,}")
+    with metric_cols[2]:
+        st.metric("Predicted types", f"{unique_predicted_project_types:,}")
+    with metric_cols[3]:
+        st.metric("Taxonomy levels", f"{unique_taxonomy_levels:,}")
+    with metric_cols[4]:
+        st.metric("Collisions", f"{len(collision_rows):,}")
+
+    bad_taxonomy_mask = clustered_matters["taxonomy_level"].notna() & ~clustered_matters["taxonomy_level"].isin(approved_taxonomy_levels)
+    bad_taxonomy_rows = clustered_matters.loc[bad_taxonomy_mask].copy()
+
+    if not bad_taxonomy_rows.empty:
+        st.error("Unapproved taxonomy levels detected. These should not exist after Step 3 validation.")
+        bad_taxonomy_columns = [
+            column
+            for column in [
+                "taxonomy_level",
+                "taxonomy_level_source",
+                "raw_practice_area",
+                "clean_practice_area",
+                "project_name",
+                "predicted_project_type",
+                "debug_notes",
+            ]
+            if column in bad_taxonomy_rows.columns
+        ]
+        st.dataframe(bad_taxonomy_rows[bad_taxonomy_columns], use_container_width=True, hide_index=True)
+    else:
+        st.success("All non-null taxonomy levels are approved practice areas.")
+
+    if not collision_rows.empty:
+        st.error("Taxonomy contamination detected: project labels are appearing as taxonomy levels.")
+    else:
+        st.success("No taxonomy/project-label contamination detected.")
+
+    practice_area_table = (
+        clustered_matters.groupby(["raw_practice_area", "clean_practice_area"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    st.markdown("#### Practice area normalization table")
+    st.dataframe(practice_area_table, use_container_width=True, hide_index=True)
+
+    project_label_table = (
+        clustered_matters.groupby(
+            [
+                "predicted_project_type",
+                "project_label_source",
+                "classification_method",
+                "classification_confidence",
+            ],
+            dropna=False,
+        )
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    st.markdown("#### Project label table")
+    st.dataframe(project_label_table, use_container_width=True, hide_index=True)
+
+    rule_summary_table = (
+        clustered_matters.groupby(["rule_project_type", "rule_project_confidence"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    st.markdown("#### Rule-Based Project Classification")
+    st.dataframe(rule_summary_table, use_container_width=True, hide_index=True)
+
+    rule_detail_columns = [
+        column
+        for column in [
+            "matter_id",
+            "matter_name",
+            "name",
+            "raw_practice_area",
+            "predicted_project_type",
+            "project_label_source",
+            "rule_project_type",
+            "rule_project_confidence",
+            "rule_matched_keywords",
+            "rule_project_reason",
+        ]
+        if column in clustered_matters.columns
+    ]
+    st.markdown("##### Rule detail")
+    st.dataframe(clustered_matters[rule_detail_columns], use_container_width=True, hide_index=True)
+
+    folio_match_results = (
+        clustered_matters.groupby(
+            ["clean_practice_area", "folio_practice_area", "folio_match_status", "folio_match_score"],
+            dropna=False,
+        )
+        .size()
+        .reset_index(name="count")
+        .sort_values(["count", "folio_match_score"], ascending=[False, False])
+    )
+    st.markdown("#### FOLIO Match Results")
+    st.dataframe(folio_match_results, use_container_width=True, hide_index=True)
+
+    matched_folio_statuses = ["normalized_exact_match", "fuzzy_match"]
+    matched_folio_table = (
+        clustered_matters[clustered_matters["folio_match_status"].isin(matched_folio_statuses)]
+        .groupby(["clean_practice_area", "folio_practice_area", "folio_match_status", "folio_match_score"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values(["count", "folio_match_score"], ascending=[False, False])
+    )
+    st.markdown("#### Practice Areas Matched to FOLIO")
+    st.dataframe(
+        matched_folio_table[
+            ["clean_practice_area", "folio_practice_area", "folio_match_status", "folio_match_score", "count"]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    unmatched_folio_statuses = ["no_match", "ambiguous_match", "no_input", "no_reference"]
+    unmatched_folio_table = (
+        clustered_matters[clustered_matters["folio_match_status"].isin(unmatched_folio_statuses)]
+        .groupby(["raw_practice_area", "clean_practice_area", "folio_match_status", "folio_match_score"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values(["count", "folio_match_score"], ascending=[False, False])
+    )
+    st.markdown("#### Practice Areas Not Matched to FOLIO")
+    st.dataframe(
+        unmatched_folio_table[
+            ["raw_practice_area", "clean_practice_area", "folio_match_status", "folio_match_score", "count"]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    taxonomy_level_table = (
+        clustered_matters.groupby(["taxonomy_level", "taxonomy_level_source"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    taxonomy_level_table["is_approved_taxonomy_level"] = taxonomy_level_table["taxonomy_level"].isin(approved_taxonomy_levels)
+    st.markdown("#### Taxonomy level table")
+    st.dataframe(
+        taxonomy_level_table[
+            ["taxonomy_level", "taxonomy_level_source", "count", "is_approved_taxonomy_level"]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    unapproved_practice_area_table = (
+        clustered_matters[
+            clustered_matters["clean_practice_area"].notna()
+            & ~clustered_matters["clean_practice_area"].isin(approved_practice_area_levels)
+        ]
+        .groupby(["raw_practice_area", "clean_practice_area"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    st.markdown("#### Unapproved Raw Practice Areas")
+    st.dataframe(unapproved_practice_area_table, use_container_width=True, hide_index=True)
+
+    approved_used_table = (
+        clustered_matters[clustered_matters["taxonomy_level"].notna()]
+        .groupby("taxonomy_level", dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    st.markdown("#### Approved Practice Areas Used")
+    st.dataframe(approved_used_table[["taxonomy_level", "count"]], use_container_width=True, hide_index=True)
+
+    collision_columns = [
+        column
+        for column in [
+            "project_name",
+            "predicted_project_type",
+            "rule_project_type",
+            "taxonomy_level",
+            "taxonomy_level_source",
+            "raw_practice_area",
+            "clean_practice_area",
+            "debug_notes",
+        ]
+        if column in collision_rows.columns
+    ]
+    st.markdown("#### Collision check table")
+    st.dataframe(collision_rows[collision_columns], use_container_width=True, hide_index=True)
+
+
+def render_taxonomy_sidebar_diagnostics(
+    approved_practice_areas: pd.DataFrame,
+    folio_reference_df: pd.DataFrame,
+    unapproved_raw_practice_area_count: int | None = None,
+    folio_matched_practice_area_count: int | None = None,
+    folio_unmatched_practice_area_count: int | None = None,
+) -> None:
+    source = approved_practice_areas.attrs.get("source", "none")
+    source_label = approved_practice_areas.attrs.get("source_label", "Not loaded")
+    detected_column = approved_practice_areas.attrs.get("detected_column")
+    folio_source = folio_reference_df.attrs.get("source", "none")
+    folio_source_label = folio_reference_df.attrs.get("source_label", "Not loaded")
+    folio_detected_column = folio_reference_df.attrs.get("detected_column")
+
+    st.markdown("### Taxonomy Approval")
+    st.write(f"Approved practice area source: {source_label if source != 'none' else 'None'}")
+    st.write(f"Detected approved practice area column: {detected_column or 'None'}")
+    st.write(f"Approved practice area count: {len(approved_practice_areas):,}")
+    if unapproved_raw_practice_area_count is None:
+        st.write("Unapproved raw practice area count: N/A")
+    else:
+        st.write(f"Unapproved raw practice area count: {unapproved_raw_practice_area_count:,}")
+
+    st.markdown("### Local FOLIO")
+    st.write(f"FOLIO reference source: {folio_source_label if folio_source != 'none' else 'None'}")
+    st.write(f"Detected FOLIO reference column: {folio_detected_column or 'None'}")
+    st.write(f"FOLIO reference count: {len(folio_reference_df):,}")
+    if folio_matched_practice_area_count is None:
+        st.write("FOLIO matched practice area count: N/A")
+    else:
+        st.write(f"FOLIO matched practice area count: {folio_matched_practice_area_count:,}")
+    if folio_unmatched_practice_area_count is None:
+        st.write("FOLIO unmatched practice area count: N/A")
+    else:
+        st.write(f"FOLIO unmatched practice area count: {folio_unmatched_practice_area_count:,}")
+
+
+def render_app_diagnostics_sidebar(
+    uploaded_matter_file_name: str,
+    uploaded_matter_row_count: int,
+    uploaded_matter_column_count: int,
+    approved_practice_areas: pd.DataFrame,
+    folio_reference_df: pd.DataFrame,
+    current_input_signature: str,
+) -> None:
+    approved_source = approved_practice_areas.attrs.get("source_label", "Not loaded")
+    folio_source = folio_reference_df.attrs.get("source_label", "Not loaded")
+    last_run_signature = st.session_state.get("last_run_signature")
+    has_results = "clustered_matters" in st.session_state and "cluster_summary" in st.session_state
+    is_current = has_results and last_run_signature == current_input_signature
+
+    if not has_results:
+        status = "Not run"
+    elif is_current:
+        status = "Current"
+    else:
+        status = "Stale"
+
+    st.markdown("### App Diagnostics")
+    st.write(f"APP_VERSION: `{APP_VERSION}`")
+    st.write(f"Uploaded matter file name: {uploaded_matter_file_name}")
+    st.write(f"Uploaded matter file row count: {uploaded_matter_row_count:,}")
+    st.write(f"Uploaded matter file column count: {uploaded_matter_column_count:,}")
+    st.write(f"Approved practice area source: {approved_source}")
+    st.write(f"Approved practice area count: {len(approved_practice_areas):,}")
+    st.write(f"FOLIO reference source: {folio_source}")
+    st.write(f"FOLIO reference count: {len(folio_reference_df):,}")
+    st.write(f"Classification/clustering status: {status}")
+    st.write(f"Last clustering run signature: `{last_run_signature or 'None'}`")
+    st.write(f"Current input signature: `{current_input_signature}`")
+    st.write(f"Cache/session state status: {status}")
+    st.write(f"Last manual clear: {st.session_state.get('last_manual_clear_at', 'None')}")
+
+
+def render_export_tab(
+    original_df: pd.DataFrame,
+    approved_practice_area_levels: set[str],
+    folio_reference_df: pd.DataFrame,
+    approved_taxonomy_levels: set[str],
+    practice_area_col: str | None,
+    current_input_signature: str,
+) -> None:
+    st.markdown("### Export")
+    st.caption("Download the original matter data with validated classification and taxonomy columns appended.")
+
+    if "clustered_matters" not in st.session_state:
+        st.warning("Run clustering/classification before exporting.")
+        return
+
+    last_run_signature = st.session_state.get("last_run_signature")
+    is_current = last_run_signature == current_input_signature
+    st.markdown("#### State Diagnostics")
+    st.write(f"Current input signature: `{current_input_signature}`")
+    st.write(f"Last run signature: `{last_run_signature or 'None'}`")
+    st.write(f"Export allowed: {'yes' if is_current else 'no'}")
+
+    clustered_matters = add_classification_taxonomy_columns(
+        st.session_state["clustered_matters"],
+        practice_area_col,
+        approved_practice_area_levels,
+        folio_reference_df,
+    )
+    st.session_state["clustered_matters"] = clustered_matters
+
+    missing_classification_columns = [
+        column
+        for column in REQUIRED_EXPORT_CLASSIFICATION_COLUMNS
+        if column not in clustered_matters.columns and column not in ["app_version", "classified_at"]
+    ]
+    if missing_classification_columns:
+        st.warning("Run clustering/classification before exporting.")
+        st.write("Missing classification columns:", missing_classification_columns)
+        return
+
+    taxonomy_values = clustered_matters["taxonomy_level"].map(normalize_taxonomy_text).fillna("")
+    project_values = (
+        clustered_matters["project_name"].map(normalize_taxonomy_text).fillna("")
+        if "project_name" in clustered_matters.columns
+        else pd.Series("", index=clustered_matters.index)
+    )
+    predicted_values = clustered_matters["predicted_project_type"].map(normalize_taxonomy_text).fillna("")
+    rule_values = clustered_matters["rule_project_type"].map(normalize_taxonomy_text).fillna("")
+    contamination_mask = taxonomy_values.ne("") & (
+        taxonomy_values.eq(project_values) | taxonomy_values.eq(predicted_values) | taxonomy_values.eq(rule_values)
+    )
+    contaminated_rows = clustered_matters.loc[contamination_mask].copy()
+
+    bad_taxonomy_mask = clustered_matters["taxonomy_level"].notna() & ~clustered_matters["taxonomy_level"].isin(approved_taxonomy_levels)
+    bad_taxonomy_rows = clustered_matters.loc[bad_taxonomy_mask].copy()
+
+    export_df = build_export_dataframe(original_df, clustered_matters)
+    renamed_columns = export_df.attrs.get("renamed_columns", [])
+    missing_required_columns = export_df.attrs.get("missing_required_export_columns", [])
+    merge_key = export_df.attrs.get("merge_key", "row_index")
+    warning_message = export_df.attrs.get("warning_message")
+
+    metric_cols = st.columns(4)
+    with metric_cols[0]:
+        st.metric("Original rows", f"{len(original_df):,}")
+    with metric_cols[1]:
+        st.metric("Classified rows", f"{len(clustered_matters):,}")
+    with metric_cols[2]:
+        st.metric("Export rows", f"{len(export_df):,}")
+    with metric_cols[3]:
+        st.metric("Merge key", merge_key)
+
+    if warning_message:
+        st.warning(warning_message)
+
+    st.markdown("#### Export Diagnostics")
+    st.write("Preexisting columns renamed with `previous_`:")
+    st.write(renamed_columns if renamed_columns else "None")
+    st.write("Missing required export columns:")
+    st.write(missing_required_columns if missing_required_columns else "None")
+
+    validation_failed = False
+
+    if not is_current:
+        validation_failed = True
+        st.error("Export blocked: stored classification results are stale. Rerun clustering/classification first.")
+
+    if not bad_taxonomy_rows.empty:
+        validation_failed = True
+        st.error("Export blocked: unapproved taxonomy levels detected.")
+        bad_taxonomy_columns = [
+            column
+            for column in [
+                "taxonomy_level",
+                "taxonomy_level_source",
+                "raw_practice_area",
+                "clean_practice_area",
+                "folio_practice_area",
+                "folio_match_status",
+                "debug_notes",
+            ]
+            if column in bad_taxonomy_rows.columns
+        ]
+        st.dataframe(bad_taxonomy_rows[bad_taxonomy_columns], use_container_width=True, hide_index=True)
+
+    if not contaminated_rows.empty:
+        validation_failed = True
+        st.error("Export blocked: taxonomy contamination detected.")
+        contaminated_columns = [
+            column
+            for column in [
+                "project_name",
+                "predicted_project_type",
+                "rule_project_type",
+                "taxonomy_level",
+                "taxonomy_level_source",
+                "raw_practice_area",
+                "clean_practice_area",
+                "debug_notes",
+            ]
+            if column in contaminated_rows.columns
+        ]
+        st.dataframe(contaminated_rows[contaminated_columns], use_container_width=True, hide_index=True)
+
+    st.markdown("#### Export Preview")
+    st.dataframe(export_df.head(50), use_container_width=True, hide_index=True)
+
+    if validation_failed:
+        return
+
+    st.session_state["export_df"] = export_df
+    st.session_state["last_export_signature"] = current_input_signature
+    st.success("Export is ready.")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.download_button(
+        "Download classified CSV",
+        data=export_df.to_csv(index=False).encode("utf-8"),
+        file_name=f"classified_historical_matter_evidence_{timestamp}.csv",
+        mime="text/csv",
+        key=f"download_classified_csv_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+    )
+
+
 def render_folio_mapper_tab(
     matter_df: pd.DataFrame,
     matter_col: str,
@@ -2971,6 +4119,61 @@ st.markdown(
 sample_paths = get_sample_account_paths()
 sample_options = {format_sample_account_label(path): str(path) for path in sample_paths}
 
+with st.sidebar:
+    if st.button("Clear cache and classification state"):
+        st.cache_data.clear()
+        clear_classification_session_state()
+        st.session_state["last_manual_clear_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.success("Cache and classification state cleared.")
+        st.rerun()
+    if "last_manual_clear_at" in st.session_state:
+        st.success(f"Cache and classification state cleared at {st.session_state['last_manual_clear_at']}.")
+
+    approved_practice_area_file = st.file_uploader(
+        "Approved practice areas CSV",
+        type=["csv"],
+        help="Optional CSV of approved practice areas. If omitted, the app looks for data/folio_practice_areas.csv.",
+        key="approved_practice_areas_csv",
+    )
+    folio_reference_file = st.file_uploader(
+        "Local FOLIO practice areas CSV",
+        type=["csv"],
+        help="Optional local CSV of FOLIO practice area labels. If omitted, the approved practice areas CSV or default file is reused.",
+        key="local_folio_practice_areas_csv",
+    )
+    taxonomy_sidebar_placeholder = st.empty()
+    app_diagnostics_placeholder = st.empty()
+
+approved_practice_areas = load_approved_practice_areas(approved_practice_area_file)
+approved_practice_area_levels = set(
+    approved_practice_areas["approved_practice_area_clean"].dropna().astype(str)
+)
+folio_reference_df = load_local_folio_reference(
+    uploaded_file=folio_reference_file,
+    fallback_uploaded_file=approved_practice_area_file,
+)
+folio_taxonomy_levels = set(
+    folio_reference_df["folio_practice_area_clean"].dropna().astype(str)
+)
+approved_taxonomy_levels = approved_practice_area_levels | folio_taxonomy_levels
+
+with taxonomy_sidebar_placeholder.container():
+    render_taxonomy_sidebar_diagnostics(approved_practice_areas, folio_reference_df)
+
+if approved_practice_areas.attrs.get("error_message"):
+    st.warning(f"Approved practice area validation is limited: {approved_practice_areas.attrs.get('error_message')}")
+elif approved_practice_areas.attrs.get("source") == "none":
+    st.warning("No approved practice area CSV was uploaded or found at data/folio_practice_areas.csv. Taxonomy approval validation is limited.")
+elif not approved_practice_areas.attrs.get("detected_column"):
+    st.warning("Approved practice area CSV did not contain a recognized practice area column. Taxonomy approval validation is limited.")
+
+if folio_reference_df.attrs.get("error_message"):
+    st.warning(f"Local FOLIO matching is limited: {folio_reference_df.attrs.get('error_message')}")
+elif folio_reference_df.attrs.get("source") == "none":
+    st.warning("No local FOLIO reference CSV was uploaded or found. FOLIO practice area matching is limited.")
+elif not folio_reference_df.attrs.get("detected_column"):
+    st.warning("Local FOLIO reference CSV did not contain a recognized FOLIO practice area column. FOLIO matching is limited.")
+
 input_cols = st.columns((1.25, 1))
 
 with input_cols[0]:
@@ -2979,6 +4182,7 @@ with input_cols[0]:
         type=["csv"],
         help="Expected structure: one row per matter, similar to historical_matter_evidence, filtered to one account.",
     )
+    st.caption("Data loading may be cached. Use 'Clear cache and classification state' if results look stale.")
 
 with input_cols[1]:
     selected_sample_label = st.selectbox(
@@ -3088,7 +4292,9 @@ else:
 
 default_granularity = choose_default_granularity(matter_df["parsed_date"])
 
-overview_tab, clustering_tab, folio_tab = st.tabs(["Initial Overview", "Cluster Analysis", "FOLIO Mapper"])
+overview_tab, clustering_tab, taxonomy_tab, export_tab, folio_tab = st.tabs(
+    ["Initial Overview", "Cluster Analysis", "Taxonomy Debugger", "Export", "FOLIO Mapper"]
+)
 
 with overview_tab:
     st.markdown(f"### {account_name}")
@@ -3168,6 +4374,12 @@ with folio_tab:
         matter_category_col=matter_category_col,
     )
 
+with taxonomy_tab:
+    taxonomy_debugger_placeholder = st.empty()
+
+with export_tab:
+    export_placeholder = st.empty()
+
 with clustering_tab:
     st.markdown("### Cluster Analysis")
     st.caption("Run a quick matter-name clustering pass, then inspect the main clusters and optional subclusters.")
@@ -3179,6 +4391,7 @@ with clustering_tab:
             "Use AI labels with Ollama",
             value=False,
             help="When enabled, the app asks local Ollama to name each cluster. If Ollama fails, it falls back to TF-IDF terms.",
+            key="use_ollama_labels",
         )
     with control_cols[1]:
         run_clustering = st.button("Run cluster analysis", type="primary")
@@ -3188,10 +4401,55 @@ with clustering_tab:
     if use_ai:
         st.info("AI labeling requires Ollama running locally at http://localhost:11434 and the llama3.1:8b model pulled.")
 
+    current_signature = compute_dataframe_signature(
+        matter_df,
+        extra_values={
+            "selected_account": account_name,
+            "data_source": data_source_label,
+            "uploaded_matter_file_name": uploaded_file.name if uploaded_file is not None else selected_sample_label,
+            "n_clusters": "auto",
+            "classification_mode": "kmeans_cluster_label",
+            "minimum_confidence_threshold": "none",
+            "approved_practice_area_source": approved_practice_areas.attrs.get("source_label", "Not loaded"),
+            "approved_practice_area_count": len(approved_practice_areas),
+            "folio_reference_source": folio_reference_df.attrs.get("source_label", "Not loaded"),
+            "folio_reference_count": len(folio_reference_df),
+            "use_ollama": use_ai,
+            "ollama_model": "llama3.1:8b" if use_ai else "none",
+        },
+    )
+
+    with app_diagnostics_placeholder.container():
+        render_app_diagnostics_sidebar(
+            uploaded_matter_file_name=uploaded_file.name if uploaded_file is not None else selected_sample_label,
+            uploaded_matter_row_count=len(raw_df),
+            uploaded_matter_column_count=len(raw_df.columns),
+            approved_practice_areas=approved_practice_areas,
+            folio_reference_df=folio_reference_df,
+            current_input_signature=current_signature,
+        )
+
+    with taxonomy_debugger_placeholder.container():
+        render_taxonomy_debugger_tab(
+            approved_practice_areas,
+            approved_practice_area_levels,
+            folio_reference_df,
+            approved_taxonomy_levels,
+            current_signature,
+        )
+
+    with export_placeholder.container():
+        render_export_tab(
+            original_df=raw_df,
+            approved_practice_area_levels=approved_practice_area_levels,
+            folio_reference_df=folio_reference_df,
+            approved_taxonomy_levels=approved_taxonomy_levels,
+            practice_area_col=practice_area_col,
+            current_input_signature=current_signature,
+        )
+
     if run_clustering:
-        st.session_state.pop("cluster_summary", None)
-        st.session_state.pop("clustered_matters", None)
-        st.session_state.pop("subclusters_by_cluster", None)
+        clear_classification_session_state()
 
         progress_bar = st.progress(0)
         status_box = st.empty()
@@ -3209,19 +4467,111 @@ with clustering_tab:
 
         if cluster_summary.empty:
             st.error("No clusters could be created. Check that the file has usable matter names.")
+            with taxonomy_debugger_placeholder.container():
+                render_taxonomy_debugger_tab(
+                    approved_practice_areas,
+                    approved_practice_area_levels,
+                    folio_reference_df,
+                    approved_taxonomy_levels,
+                    current_signature,
+                )
+            with export_placeholder.container():
+                render_export_tab(
+                    original_df=raw_df,
+                    approved_practice_area_levels=approved_practice_area_levels,
+                    folio_reference_df=folio_reference_df,
+                    approved_taxonomy_levels=approved_taxonomy_levels,
+                    practice_area_col=practice_area_col,
+                    current_input_signature=current_signature,
+                )
         else:
             cluster_summary, clustered_matters = reconcile_project_clusters(cluster_summary, clustered_matters)
             clustered_matters = add_numeric_columns(clustered_matters, billing_col, hours_col, rate_col, entries_col, users_col)
+            clustered_matters = add_classification_taxonomy_columns(
+                clustered_matters,
+                practice_area_col,
+                approved_practice_area_levels,
+                folio_reference_df,
+            )
             st.session_state["cluster_summary"] = cluster_summary
             st.session_state["clustered_matters"] = clustered_matters
             st.session_state["use_ai"] = use_ai
+            st.session_state["last_run_signature"] = current_signature
+            with app_diagnostics_placeholder.container():
+                render_app_diagnostics_sidebar(
+                    uploaded_matter_file_name=uploaded_file.name if uploaded_file is not None else selected_sample_label,
+                    uploaded_matter_row_count=len(raw_df),
+                    uploaded_matter_column_count=len(raw_df.columns),
+                    approved_practice_areas=approved_practice_areas,
+                    folio_reference_df=folio_reference_df,
+                    current_input_signature=current_signature,
+                )
+            with taxonomy_debugger_placeholder.container():
+                render_taxonomy_debugger_tab(
+                    approved_practice_areas,
+                    approved_practice_area_levels,
+                    folio_reference_df,
+                    approved_taxonomy_levels,
+                    current_signature,
+                )
+            with export_placeholder.container():
+                render_export_tab(
+                    original_df=raw_df,
+                    approved_practice_area_levels=approved_practice_area_levels,
+                    folio_reference_df=folio_reference_df,
+                    approved_taxonomy_levels=approved_taxonomy_levels,
+                    practice_area_col=practice_area_col,
+                    current_input_signature=current_signature,
+                )
 
     if "cluster_summary" not in st.session_state or "clustered_matters" not in st.session_state:
         st.info("Run the cluster analysis to see project names, charts, and cluster details.")
         st.stop()
 
+    if not is_classification_state_current(current_signature):
+        st.warning("Stored clustering/classification results may be stale because the input file, settings, taxonomy reference, or app version changed. Please rerun clustering/classification.")
+
     cluster_summary = st.session_state["cluster_summary"]
-    clustered_matters = st.session_state["clustered_matters"]
+    clustered_matters = add_classification_taxonomy_columns(
+        st.session_state["clustered_matters"],
+        practice_area_col,
+        approved_practice_area_levels,
+        folio_reference_df,
+    )
+    st.session_state["clustered_matters"] = clustered_matters
+    unapproved_raw_practice_area_count = (
+        clustered_matters.loc[
+            clustered_matters["clean_practice_area"].notna()
+            & ~clustered_matters["clean_practice_area"].isin(approved_practice_area_levels),
+            "clean_practice_area",
+        ]
+        .dropna()
+        .nunique()
+    )
+    folio_matched_practice_area_count = (
+        clustered_matters.loc[
+            clustered_matters["folio_match_status"].isin(["normalized_exact_match", "fuzzy_match"]),
+            "clean_practice_area",
+        ]
+        .dropna()
+        .nunique()
+    )
+    folio_unmatched_practice_area_count = (
+        clustered_matters.loc[
+            clustered_matters["folio_match_status"].isin(["no_match", "ambiguous_match", "no_input", "no_reference"]),
+            "clean_practice_area",
+        ]
+        .dropna()
+        .nunique()
+    )
+    with taxonomy_sidebar_placeholder.container():
+        render_taxonomy_sidebar_diagnostics(
+            approved_practice_areas,
+            folio_reference_df,
+            unapproved_raw_practice_area_count=unapproved_raw_practice_area_count,
+            folio_matched_practice_area_count=folio_matched_practice_area_count,
+            folio_unmatched_practice_area_count=folio_unmatched_practice_area_count,
+        )
 
     actual_clustered_count = (
         clustered_matters["matter_id_for_count"].nunique()
