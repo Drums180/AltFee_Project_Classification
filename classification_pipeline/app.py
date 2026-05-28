@@ -183,63 +183,37 @@ CUSTOM_CSS = """
     }
 
     .folio-project-header {
-        background: #ffffff;
-        border: 1px solid #D9D9D9;
-        border-left: 7px solid #54B39A;
-        border-radius: 18px;
-        padding: 1.2rem 1.35rem;
-        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-        margin-bottom: 1rem;
+        text-align: center;
+        margin: 1.1rem 0 1.2rem;
+        padding: 0.35rem 1rem 0.65rem;
     }
 
     .folio-project-heading {
         display: flex;
         align-items: center;
+        justify-content: center;
         flex-wrap: wrap;
         gap: 0.65rem;
-        margin-bottom: 0.35rem;
+        margin-bottom: 0.45rem;
     }
 
     .folio-project-heading h3 {
         color: #1F1F1F;
-        font-size: 1.35rem;
+        font-size: 1.7rem;
         font-weight: 850;
         margin: 0;
     }
 
-    .folio-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        background: linear-gradient(135deg, #E8F7EF 0%, #FFF3D8 100%);
-        border: 1px solid #B7E0CB;
-        border-radius: 999px;
+    .folio-plus {
         color: #2C8576;
-        font-size: 0.78rem;
-        font-weight: 850;
-        letter-spacing: 0.02em;
-        padding: 0.24rem 0.62rem;
-        box-shadow: 0 0 0 3px rgba(84, 179, 154, 0.10);
-        white-space: nowrap;
+        font-weight: 950;
+        font-size: 1.05em;
     }
 
-    .folio-badge::before {
-        content: "";
-        width: 0.46rem;
-        height: 0.46rem;
-        border-radius: 999px 999px 999px 0;
-        background: #54B39A;
-        transform: rotate(-35deg);
-        animation: folio-leaf-glow 2.4s ease-in-out infinite;
-    }
-
-    @keyframes folio-leaf-glow {
-        0%, 100% {
-            box-shadow: 0 0 0 0 rgba(84, 179, 154, 0.28);
-        }
-        50% {
-            box-shadow: 0 0 0 5px rgba(84, 179, 154, 0.08);
-        }
+    .folio-verified-text {
+        color: #2C8576;
+        font-size: 0.9rem;
+        font-weight: 900;
     }
 
     .folio-project-title {
@@ -251,14 +225,16 @@ CUSTOM_CSS = """
 
     .folio-project-description {
         color: #4B5563;
-        font-size: 0.94rem;
+        font-size: 1rem;
         line-height: 1.5;
-        margin-bottom: 0.25rem;
+        margin: 0 auto 0.25rem;
+        max-width: 820px;
     }
 
     .folio-project-meta {
-        color: #7B7B7B;
-        font-size: 0.78rem;
+        color: #2C8576;
+        font-size: 0.9rem;
+        font-weight: 900;
     }
 </style>
 """
@@ -308,6 +284,7 @@ OPTIONAL_COLUMN_OPTIONS = {
     "n_time_entries": ["n_time_entries", "time_entries", "number_of_time_entries"],
     "n_unique_users": ["n_unique_users", "unique_users", "number_of_users"],
     "practice_area": ["practice_area", "area_of_law", "matter_practice_area"],
+    "matter_category": ["matter_category", "category", "matter_type", "matter_category_name", "case_type"],
     "all_time_entry_text": ["all_time_entry_text", "activity_text", "activity_text_description", "time_entry_text"],
 }
 
@@ -518,22 +495,560 @@ def render_missing_columns(missing: list[str]) -> None:
 
 
 BASE_LEGAL_SERVICE_KEYWORDS = {
-    "agreement", "agreements", "contract", "contracts", "lease", "leasing", "nda", "mnDA", "confidentiality",
-    "incorporation", "incorporate", "corporate", "corporation", "company", "business", "shareholder", "shareholders",
-    "estate", "probate", "will", "wills", "trust", "trusts", "poa", "power", "attorney", "representation",
-    "litigation", "dispute", "claim", "claims", "settlement", "court", "motion", "pleading", "pleadings",
-    "employment", "employee", "employer", "termination", "severance", "immigration", "visa", "permit",
-    "trademark", "copyright", "ip", "intellectual", "property", "real", "transaction", "purchase", "sale",
-    "family", "divorce", "dissolution", "separation", "custody", "support", "tax", "planning", "financing", "loan",
-    "privacy", "policy", "terms", "service", "licensing", "license", "review", "advisory", "compliance",
+    # Generic legal work
+    "agreement", "agreements", "contract", "contracts", "document", "documents",
+    "draft", "drafting", "review", "revision", "revisions", "negotiation", "negotiations",
+    "advice", "advisory", "consultation", "counsel", "opinion", "memo", "memorandum",
+    "letter", "letters", "notice", "notices", "filing", "filings", "application", "applications",
+    "registration", "registrations", "renewal", "renewals", "amendment", "amendments",
+    "assignment", "assignments", "transfer", "transfers", "transaction", "transactions",
+    "closing", "diligence", "due", "escrow", "consent", "waiver", "release", "certificate",
+    "certificates", "resolution", "resolutions", "bylaw", "bylaws", "minute", "minutes",
+
+    # Commercial contracts
+    "lease", "leases", "leasing", "nda", "mnda", "confidentiality", "noncompete",
+    "nonsolicit", "solicitation", "contractor", "vendor", "supplier", "customer",
+    "client", "service", "services", "licensing", "license", "licenses", "subscription",
+    "saas", "software", "technology", "terms", "policy", "policies", "privacy",
+    "data", "processing", "dpa", "msa", "sow", "loa", "loi", "mou", "purchase",
+    "sale", "sales", "distribution", "reseller", "franchise", "partnership",
+    "joint", "venture", "sponsorship", "manufacturing", "supply", "procurement",
+
+    # Corporate / business
+    "incorporation", "incorporate", "incorporated", "corporate", "corporation",
+    "company", "companies", "business", "startup", "startups", "shareholder",
+    "shareholders", "director", "directors", "officer", "officers", "board",
+    "governance", "reorganization", "reorg", "amalgamation", "merger", "acquisition",
+    "m&a", "ma", "asset", "assets", "share", "shares", "equity", "securities",
+    "financing", "finance", "loan", "loans", "debt", "credit", "investment",
+    "investor", "investors", "subscription", "option", "options", "warrant",
+    "warrants", "cap", "capitalization", "dividend", "dissolution", "windup",
+    "wind-up", "opco", "holdco", "subsidiary", "affiliate",
+
+    # Estate / trust / planning
+    "estate", "estates", "probate", "will", "wills", "trust", "trusts",
+    "poa", "power", "attorney", "representation", "executor", "executors",
+    "administrator", "administration", "beneficiary", "beneficiaries", "inheritance",
+    "succession", "guardianship", "guardian", "codicil", "capacity", "incapacity",
+    "planning", "elder", "eldercare",
+
+    # Litigation / dispute resolution
+    "litigation", "dispute", "disputes", "claim", "claims", "settlement",
+    "court", "motion", "motions", "pleading", "pleadings", "action", "actions",
+    "lawsuit", "suit", "trial", "appeal", "appeals", "hearing", "hearings",
+    "mediation", "mediations", "arbitration", "arbitrations", "adr", "injunction",
+    "injunctive", "judgment", "judgement", "default", "summary", "discovery",
+    "deposition", "depositions", "affidavit", "affidavits", "evidence",
+    "witness", "witnesses", "defence", "defense", "plaintiff", "defendant",
+    "respondent", "applicant", "petition", "complaint", "counterclaim",
+    "crossclaim", "damages", "liability", "negligence", "breach", "enforcement",
+    "collection", "collections",
+
+    # Employment / workplace
+    "employment", "employee", "employees", "employer", "employers", "workplace",
+    "termination", "severance", "dismissal", "wrongful", "constructive",
+    "contractor", "independent", "consultant", "consulting", "offer", "offers",
+    "compensation", "bonus", "commission", "policy", "handbook", "workplace",
+    "harassment", "discrimination", "human", "resources", "hr", "labour", "labor",
+    "union", "grievance", "discipline", "investigation", "investigations",
+
+    # Immigration
+    "immigration", "visa", "visas", "permit", "permits", "citizenship",
+    "residency", "residence", "permanent", "temporary", "sponsorship",
+    "sponsor", "lmia", "work", "study", "student", "visitor", "pr", "trv",
+    "eta", "pgwp", "express", "entry", "refugee", "asylum", "inadmissibility",
+    "removal", "deportation", "naturalization", "border", "consulate",
+    "embassy",
+
+    # IP / technology
+    "trademark", "trademarks", "copyright", "copyrights", "ip", "intellectual",
+    "property", "patent", "patents", "brand", "branding", "logo", "logos",
+    "mark", "marks", "infringement", "licensing", "license", "assignment",
+    "technology", "software", "source", "code", "open", "opensource",
+    "domain", "domains", "trade", "secret", "secrets", "portfolio",
+
+    # Real estate / property
+    "real", "property", "realty", "estate", "land", "title", "mortgage",
+    "conveyance", "conveyancing", "purchase", "sale", "closing", "lease",
+    "leases", "leasing", "landlord", "tenant", "tenancy", "rent", "rental",
+    "commercial", "residential", "development", "zoning", "easement",
+    "covenant", "strata", "condo", "condominium", "hoa", "foreclosure",
+    "lien", "construction", "builder", "deficiency",
+
+    # Family
+    "family", "divorce", "dissolution", "separation", "custody", "support",
+    "child", "children", "parenting", "parental", "spousal", "alimony",
+    "maintenance", "guardianship", "access", "visitation", "adoption",
+    "marriage", "matrimonial", "prenup", "prenuptial", "cohabitation",
+    "postnuptial", "domestic", "violence", "restraining", "protection",
+
+    # Tax / regulatory / compliance
+    "tax", "taxes", "gst", "hst", "vat", "cra", "irs", "planning",
+    "compliance", "regulatory", "regulation", "regulations", "audit",
+    "audits", "appeal", "appeals", "filing", "return", "returns",
+    "election", "elections", "assessment", "reassessment", "penalty",
+    "penalties", "aml", "kyc", "fintrac", "ofac", "sanctions",
+    "privacy", "security", "cybersecurity", "breach", "incident",
+    "gdpr", "ccpa", "pipeda", "hipaa", "soc", "iso",
+
+    # Personal injury / insurance
+    "injury", "personal", "accident", "motor", "vehicle", "mva",
+    "insurance", "insurer", "coverage", "benefits", "disability",
+    "medical", "malpractice", "tort", "negligence", "slip", "fall",
+    "damages", "settlement",
+
+    # Criminal / administrative
+    "criminal", "charge", "charges", "offence", "offense", "bail",
+    "sentencing", "probation", "parole", "dui", "dwi", "impaired",
+    "traffic", "ticket", "licence", "license", "disciplinary",
+    "tribunal", "board", "commission", "hearing", "review",
+
+    # Bankruptcy / insolvency
+    "bankruptcy", "insolvency", "creditor", "creditors", "debtor",
+    "debtors", "receivership", "receiver", "restructuring", "proposal",
+    "liquidation", "foreclosure", "security", "secured", "priority",
+
+    # Nonprofit / charity
+    "nonprofit", "not-for-profit", "charity", "charitable", "foundation",
+    "society", "association", "bylaws", "governance", "donation",
+    "donor", "grant", "grants",
+}
+
+LEGAL_PROJECT_ACRONYMS = {
+    # Core contracts / commercial
+    "nda": "NDA",
+    "mnda": "MNDA",
+    "cda": "CDA",                      # Confidential Disclosure Agreement
+    "cnc": "CNC",                      # Confidentiality / non-compete, depending on firm usage
+    "msa": "MSA",
+    "sow": "SOW",
+    "loa": "LOA",
+    "loi": "LOI",
+    "mou": "MOU",
+    "term": "Term Sheet",
+    "ts": "Term Sheet",
+    "tsa": "TSA",                      # Transition Services Agreement
+    "dpa": "DPA",                      # Data Processing Agreement
+    "dsa": "DSA",                      # Data Sharing Agreement
+    "baa": "Business Associate Agreement",
+    "sla": "SLA",
+    "eula": "EULA",
+    "tos": "Terms of Service",
+    "tou": "Terms of Use",
+    "tc": "Terms and Conditions",
+    "tcs": "Terms and Conditions",
+    "saas": "SaaS",
+    "paas": "PaaS",
+    "iaas": "IaaS",
+    "msa_sow": "MSA / SOW",
+    "po": "Purchase Order",
+    "rfx": "RFX",
+    "rfp": "RFP",
+    "rfq": "RFQ",
+    "rfi": "RFI",
+    "qc": "Quality Control",
+    "qa": "Quality Assurance",
+
+    # Corporate / M&A
+    "ma": "M&A",
+    "m&a": "M&A",
+    "spa": "SPA",                      # Share Purchase Agreement / Sale Purchase Agreement
+    "apa": "APA",                      # Asset Purchase Agreement / Administrative Procedure Act
+    "bpsa": "Business Purchase and Sale Agreement",
+    "sha": "SHA",                      # Shareholders Agreement
+    "sa": "SA",                        # Shareholders / Subscription / Separation Agreement - ambiguous
+    "usa": "USA",                      # Unanimous Shareholders Agreement
+    "rofr": "ROFR",
+    "rofo": "ROFO",
+    "drag": "Drag-Along",
+    "tag": "Tag-Along",
+    "cap": "Cap Table",
+    "corp": "Corporate",
+    "inc": "Incorporation",
+    "coi": "Certificate of Incorporation",
+    "aoi": "Articles of Incorporation",
+    "aoa": "Articles of Association",
+    "bylaws": "Bylaws",
+    "ubo": "UBO",
+    "bo": "Beneficial Ownership",
+    "amalg": "Amalgamation",
+    "arrangement": "Plan of Arrangement",
+    "poa_corp": "Plan of Arrangement",
+    "opco": "OpCo",
+    "holdco": "HoldCo",
+    "jv": "JV",
+    "jva": "Joint Venture Agreement",
+    "lp": "LP",
+    "lpa": "Limited Partnership Agreement",
+    "gp": "GP",
+    "llc": "LLC",
+    "llp": "LLP",
+    "pllc": "PLLC",
+    "pc": "Professional Corporation",
+    "d&o": "Directors and Officers",
+    "dao": "DAO",
+
+    # Financing / securities / funds
+    "safe": "SAFE",
+    "note": "Convertible Note",
+    "cn": "Convertible Note",
+    "ppa": "PPA",                      # Purchase Price Allocation / Power Purchase Agreement
+    "ppm": "PPM",
+    "om": "Offering Memorandum",
+    "sub": "Subscription Agreement",
+    "sub_agmt": "Subscription Agreement",
+    "ipo": "IPO",
+    "rto": "Reverse Takeover",
+    "loans": "Loans",
+    "lsa": "Loan and Security Agreement",
+    "gsa": "General Security Agreement",
+    "psa_security": "Personal Security Agreement",
+    "debenture": "Debenture",
+    "warrant": "Warrant",
+    "rsu": "RSU",
+    "psu": "PSU",
+    "dsu": "DSU",
+    "eso": "ESO",
+    "esop": "ESOP",
+    "qsbs": "QSBS",
+    "vc": "Venture Capital",
+    "pe": "Private Equity",
+    "fund": "Fund",
+    "nav": "NAV",
+    "aif": "AIF",
+    "lpac": "LPAC",
+
+    # IP / tech
+    "ip": "IP",
+    "ipr": "IP Rights",
+    "tm": "TM",
+    "tmx": "Trademark",
+    "tm_app": "Trademark Application",
+    "tm_reg": "Trademark Registration",
+    "copyright": "Copyright",
+    "dmca": "DMCA",
+    "pat": "Patent",
+    "pct": "PCT",
+    "uspto": "USPTO",
+    "cipo": "CIPO",
+    "lic": "License",
+    "api": "API",
+    "oss": "OSS",
+    "foss": "FOSS",
+    "open_source": "Open Source",
+    "ecom": "E-Commerce",
+    "ai": "AI",
+    "ml": "ML",
+
+    # Privacy / healthcare / compliance
+    "gdpr": "GDPR",
+    "ccpa": "CCPA",
+    "cpra": "CPRA",
+    "pipeda": "PIPEDA",
+    "hipaa": "HIPAA",
+    "hitech": "HITECH",
+    "phi": "PHI",
+    "pii": "PII",
+    "pci": "PCI",
+    "pci_dss": "PCI DSS",
+    "soc": "SOC",
+    "soc1": "SOC 1",
+    "soc2": "SOC 2",
+    "iso": "ISO",
+    "iso27001": "ISO 27001",
+    "aml": "AML",
+    "kyc": "KYC",
+    "ctf": "CTF",
+    "ofac": "OFAC",
+    "fintrac": "FINTRAC",
+    "finra": "FINRA",
+    "sec": "SEC",
+    "osfi": "OSFI",
+    "fcac": "FCAC",
+    "casl": "CASL",
+    "foippa": "FOIPPA",
+    "glba": "GLBA",
+    "ferpa": "FERPA",
+    "coppa": "COPPA",
+
+    # Employment
+    "emp": "Employment",
+    "ea": "Employment Agreement",
+    "ica": "Independent Contractor Agreement",
+    "nca": "Non-Compete Agreement",
+    "nsa": "Non-Solicitation Agreement",
+    "esa": "Employment Standards Act",
+    "fmla": "FMLA",
+    "ada": "ADA",
+    "eeoc": "EEOC",
+    "osha": "OSHA",
+    "pip": "Performance Improvement Plan",
+    "hr": "HR",
+    "wcb": "WCB",
+    "wsib": "WSIB",
+    "wc": "Workers Compensation",
+    "severance": "Severance",
+    "termination": "Termination",
+
+    # Real estate / leasing / construction
+    "lo": "Lease Offer",
+    "lease": "Lease",
+    "psa": "Purchase and Sale Agreement",
+    "aps": "Agreement of Purchase and Sale",
+    "loi_re": "Real Estate Letter of Intent",
+    "loa_real_estate": "Lease Offer Agreement",
+    "roi": "Right of Inspection",
+    "strata": "Strata",
+    "hoa": "HOA",
+    "reo": "REO",
+    "cre": "Commercial Real Estate",
+    "res_re": "Residential Real Estate",
+    "p&s": "Purchase and Sale",
+    "cml": "Commercial Lease",
+    "rml": "Residential Lease",
+    "estoppel": "Estoppel Certificate",
+    "nsp": "Notice of Security Interest",
+    "lien": "Lien",
+    "builders_lien": "Builders Lien",
+    "cgl": "CGL",
+    "epc": "EPC",
+    "ppa_energy": "Power Purchase Agreement",
+
+    # Family / estate
+    "poa": "POA",
+    "epa": "Enduring Power of Attorney",
+    "lpa": "Lasting Power of Attorney",
+    "hcd": "Health Care Directive",
+    "ahcd": "Advance Health Care Directive",
+    "will": "Will",
+    "codicil": "Codicil",
+    "rep": "Representation Agreement",
+    "ra": "Representation Agreement",
+    "prenup": "Prenup",
+    "pna": "Prenuptial Agreement",
+    "postnup": "Postnuptial Agreement",
+    "cohab": "Cohabitation Agreement",
+    "sep": "Separation Agreement",
+    "sa_family": "Separation Agreement",
+    "div": "Divorce",
+    "custody": "Custody",
+    "cs": "Child Support",
+    "ss": "Spousal Support",
+    "guardianship": "Guardianship",
+    "probate": "Probate",
+    "loa_estate": "Letters of Administration",
+    "log": "Letters of Guardianship",
+
+    # Litigation / dispute
+    "adr": "ADR",
+    "arb": "Arbitration",
+    "med": "Mediation",
+    "lit": "Litigation",
+    "soc": "Statement of Claim",
+    "noc": "Notice of Civil Claim",
+    "nod": "Notice of Dispute",
+    "noa": "Notice of Application",
+    "nocc": "Notice of Civil Claim",
+    "rcc": "Response to Civil Claim",
+    "msj": "Motion for Summary Judgment",
+    "sj": "Summary Judgment",
+    "tro": "TRO",
+    "ro": "Restraining Order",
+    "inj": "Injunction",
+    "pi": "Preliminary Injunction",
+    "td": "Temporary Detention",
+    "disc": "Discovery",
+    "rfa": "Request for Admission",
+    "rfp": "Request for Production",
+    "rog": "Interrogatories",
+    "depo": "Deposition",
+    "aff": "Affidavit",
+    "settlement": "Settlement",
+    "msa_lit": "Mediated Settlement Agreement",
+    "jdgm": "Judgment",
+    "appeal": "Appeal",
+
+    # Immigration
+    "lmia": "LMIA",
+    "wp": "Work Permit",
+    "owp": "Open Work Permit",
+    "pgwp": "PGWP",
+    "sp": "Study Permit",
+    "pr": "Permanent Residence",
+    "trv": "TRV",
+    "eta": "eTA",
+    "ee": "Express Entry",
+    "pnp": "PNP",
+    "aor": "Acknowledgement of Receipt",
+    "copr": "Confirmation of Permanent Residence",
+    "ircc": "IRCC",
+    "cbsa": "CBSA",
+    "uscis": "USCIS",
+    "h1b": "H-1B",
+    "h4": "H-4",
+    "l1": "L-1",
+    "l2": "L-2",
+    "tn": "TN",
+    "ead": "EAD",
+    "i130": "I-130",
+    "i140": "I-140",
+    "i485": "I-485",
+    "i765": "I-765",
+    "i131": "I-131",
+    "n400": "N-400",
+    "rfe": "RFE",
+    "noid": "NOID",
+    "aos": "Adjustment of Status",
+
+    # Tax / finance
+    "cra": "CRA",
+    "irs": "IRS",
+    "gst": "GST",
+    "hst": "HST",
+    "vat": "VAT",
+    "ein": "EIN",
+    "itin": "ITIN",
+    "ssn": "SSN",
+    "tin": "TIN",
+    "tax": "Tax",
+    "t1": "T1",
+    "t2": "T2",
+    "t3": "T3",
+    "t4": "T4",
+    "w2": "W-2",
+    "w9": "W-9",
+    "1099": "1099",
+    "1040": "1040",
+    "1065": "1065",
+    "1120": "1120",
+    "1120s": "1120S",
+    "fbAR".lower(): "FBAR",
+    "fatca": "FATCA",
+    "fica": "FICA",
+    "fbar": "FBAR",
+
+    # Criminal / regulatory / administrative
+    "dui": "DUI",
+    "dwi": "DWI",
+    "owi": "OWI",
+    "dwai": "DWAI",
+    "felony": "Felony",
+    "misd": "Misdemeanor",
+    "misdemeanor": "Misdemeanor",
+    "bail": "Bail",
+    "probation": "Probation",
+    "parole": "Parole",
+    "foia": "FOIA",
+    "atip": "ATIP",
+    "judicial_review": "Judicial Review",
+    "jr": "Judicial Review",
+
+    # Bankruptcy / insolvency
+    "bk": "Bankruptcy",
+    "bky": "Bankruptcy",
+    "c11": "Chapter 11",
+    "ch11": "Chapter 11",
+    "ch7": "Chapter 7",
+    "ch13": "Chapter 13",
+    "noi": "Notice of Intention",
+    "ccaa": "CCAA",
+    "bIA".lower(): "BIA",
+    "bia": "BIA",
+    "proposal": "Proposal",
+    "receivership": "Receivership",
+
+    # Nonprofit / charity
+    "nfp": "Not-for-Profit",
+    "ngo": "NGO",
+    "501c3": "501(c)(3)",
+    "charity": "Charity",
+    "society": "Society",
+    "foundation": "Foundation",
 }
 
 PROJECT_STOPWORDS = set(ENGLISH_STOP_WORDS).union({
-    "matter", "client", "file", "general", "legal", "services", "service", "work", "review",
-    "draft", "drafting", "prepare", "preparation", "advice", "consultation", "conference",
-    "email", "call", "meeting", "internal", "admin", "administrative", "misc", "miscellaneous",
-    "new", "old", "ltd", "inc", "corp", "company", "corporation", "limited", "llc", "pllc", "group",
-    "na", "none", "unknown", "untitled", "mattername", "project", "projects", "regarding", "phone",
+    # Generic matter/project noise
+    "matter", "matters", "client", "clients", "file", "files", "project", "projects",
+    "case", "cases", "general", "legal", "services", "service", "work", "works",
+    "task", "tasks", "item", "items", "issue", "issues", "thing", "things",
+    "misc", "miscellaneous", "other", "various", "related", "regarding", "re",
+    "about", "concerning", "respecting", "involving", "including",
+
+    # Generic legal task verbs
+    "review", "reviews", "reviewing", "draft", "drafts", "drafting", "drafted",
+    "prepare", "prepares", "preparation", "prepared", "revise", "revises",
+    "revising", "revised", "edit", "edits", "editing", "edited", "update",
+    "updates", "updating", "updated", "finalize", "finalized", "finalizing",
+    "complete", "completed", "completion", "assist", "assistance", "help",
+    "support", "provide", "provided", "providing", "handle", "handled",
+    "handling", "manage", "managed", "management",
+
+    # Communication/admin noise
+    "advice", "advise", "advising", "consultation", "consult", "consulting",
+    "conference", "conferences", "email", "emails", "mail", "call", "calls",
+    "phone", "telephone", "meeting", "meetings", "discussion", "discussions",
+    "correspondence", "letter", "letters", "memo", "memorandum", "note", "notes",
+    "message", "messages", "follow", "followup", "follow-up", "followups",
+    "touchbase", "touch-base", "internal", "admin", "administrative",
+    "coordination", "coordinate", "coordinating", "schedule", "scheduling",
+
+    # Status / lifecycle noise
+    "new", "old", "open", "opened", "closed", "close", "closing", "active",
+    "inactive", "pending", "ongoing", "completed", "complete", "initial",
+    "final", "preliminary", "temporary", "temp", "draft", "drafts",
+    "current", "previous", "prior", "future", "potential", "prospective",
+    "proposed", "possible", "standard", "regular", "routine", "urgent",
+    "rush", "high", "low",
+
+    # Unknown / missing-value noise
+    "na", "n/a", "none", "null", "nan", "unknown", "unk", "tbd", "tba",
+    "todo", "blank", "missing", "untitled", "unnamed", "no", "name",
+    "mattername", "test", "sample", "demo", "placeholder",
+
+    # Business entity suffixes / firm-name noise
+    "ltd", "limited", "inc", "incorporated", "corp", "corporation", "co",
+    "company", "companies", "llc", "pllc", "lp", "llp", "lllp", "pc",
+    "p.c", "p.c.", "plc", "gmbh", "sa", "s.a", "s.a.", "sarl", "bv",
+    "ag", "nv", "pty", "pte", "group", "holdings", "holding", "partners",
+    "partnership", "ventures", "venture", "capital", "management", "solutions",
+    "consulting", "advisors", "adviser", "associates", "enterprises",
+    "industries", "international", "global", "canada", "usa", "us", "uk",
+
+    # Person/client-name glue words
+    "mr", "mrs", "ms", "miss", "dr", "prof", "sir", "madam", "estate",
+    "family", "trust", "children", "child", "spouse", "husband", "wife",
+    "father", "mother", "son", "daughter", "brother", "sister",
+
+    # Dates/months/time noise
+    "jan", "january", "feb", "february", "mar", "march", "apr", "april",
+    "may", "jun", "june", "jul", "july", "aug", "august", "sep", "sept",
+    "september", "oct", "october", "nov", "november", "dec", "december",
+    "mon", "monday", "tue", "tuesday", "wed", "wednesday", "thu", "thursday",
+    "fri", "friday", "sat", "saturday", "sun", "sunday", "today", "tomorrow",
+    "yesterday", "week", "month", "year", "annual", "quarter", "q1", "q2",
+    "q3", "q4", "fy",
+
+    # Location / address noise
+    "street", "st", "avenue", "ave", "road", "rd", "drive", "dr", "boulevard",
+    "blvd", "lane", "ln", "court", "ct", "suite", "unit", "floor", "apt",
+    "apartment", "city", "province", "state", "county", "district", "region",
+
+    # Finance/accounting noise
+    "invoice", "invoices", "billing", "bill", "bills", "payment", "payments",
+    "paid", "unpaid", "fee", "fees", "cost", "costs", "expense", "expenses",
+    "account", "accounts", "accounting", "retainer", "trust", "balance",
+    "statement", "statements", "receipt", "receipts",
+
+    # Common weak legal words — useful alone? usually no
+    "law", "lawyer", "lawyers", "attorney", "attorneys", "counsel",
+    "firm", "practice", "area", "areas", "document", "documents",
+    "form", "forms", "template", "templates", "process", "procedure",
+    "matter-specific", "specific",
+
+    # Connector / CRM / database noise
+    "clio", "altfee", "import", "export", "sync", "synced", "database",
+    "data", "record", "records", "entry", "entries", "id", "number",
+    "reference", "ref",
 })
 
 ALL_STOP_WORDS = PROJECT_STOPWORDS
@@ -1113,6 +1628,7 @@ def classify_clusters_to_practice_areas(cluster_summary: pd.DataFrame, candidate
 FOLIO_API_BASE_URL = "https://folio.openlegalstandard.org"
 FOLIO_SEARCH_TIMEOUT_SECONDS = 8
 FOLIO_MATCH_THRESHOLD = 0.35
+FOLIO_CACHE_VERSION = 2
 
 
 def first_text_value(value: object) -> str:
@@ -1159,7 +1675,7 @@ def extract_folio_search_results(payload: object) -> list[dict]:
         return [item for item in payload if isinstance(item, dict)]
     if not isinstance(payload, dict):
         return []
-    for key in ["results", "matches", "data", "items", "concepts"]:
+    for key in ["classes", "results", "matches", "data", "items", "concepts"]:
         value = payload.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
@@ -1179,6 +1695,7 @@ def extract_folio_title(payload: dict) -> str:
                     return text
     return get_nested_text(payload, [
         "title",
+        "preferred_label",
         "prefLabel",
         "preferredLabel",
         "label",
@@ -1244,7 +1761,11 @@ def folio_match_score(cluster_name: str, folio_title: str) -> float:
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 12)
-def fetch_folio_project_match(cluster_name: str, min_score: float = FOLIO_MATCH_THRESHOLD) -> dict:
+def fetch_folio_project_match(
+    cluster_name: str,
+    min_score: float = FOLIO_MATCH_THRESHOLD,
+    cache_version: int = FOLIO_CACHE_VERSION,
+) -> dict:
     clean_cluster_name = str(cluster_name or "").strip()
     empty_result = {
         "folio_verified": False,
@@ -1253,6 +1774,7 @@ def fetch_folio_project_match(cluster_name: str, min_score: float = FOLIO_MATCH_
         "folio_class_id": "",
         "folio_match_score": np.nan,
         "folio_match_method": "no_match",
+        "folio_api_status": "not_called",
         "folio_search_url": "",
     }
     if not clean_cluster_name:
@@ -1270,6 +1792,7 @@ def fetch_folio_project_match(cluster_name: str, min_score: float = FOLIO_MATCH_
     except Exception:
         result = empty_result.copy()
         result["folio_match_method"] = "folio_search_failed"
+        result["folio_api_status"] = "connection_failed"
         result["folio_search_url"] = f"{search_url}?query={quote(clean_cluster_name)}"
         return result
 
@@ -1279,23 +1802,35 @@ def fetch_folio_project_match(cluster_name: str, min_score: float = FOLIO_MATCH_
     for candidate in search_results:
         candidate_title = extract_folio_title(candidate)
         candidate_id = extract_folio_class_id(candidate)
-        if not candidate_title:
-            candidate_title = candidate_id
-        score = folio_match_score(clean_cluster_name, candidate_title)
+        candidate_label = get_nested_text(candidate, [
+            "label",
+            "name",
+            "rdfs:label",
+            "http://www.w3.org/2000/01/rdf-schema#label",
+        ])
+        candidate_match_labels = [
+            label for label in [candidate_label, candidate_title, candidate_id] if label
+        ]
+        score = max(
+            [folio_match_score(clean_cluster_name, label) for label in candidate_match_labels],
+            default=0.0,
+        )
         if score > best_score:
             best_result = candidate
             best_score = score
-            best_title = candidate_title
+            best_title = candidate_title or candidate_label or candidate_id
 
     if best_result is None or best_score < min_score:
         result = empty_result.copy()
         result["folio_match_score"] = round(float(best_score), 3)
         result["folio_match_method"] = "below_threshold"
+        result["folio_api_status"] = "no_match"
         result["folio_search_url"] = f"{search_url}?query={quote(clean_cluster_name)}"
         return result
 
     class_id = extract_folio_class_id(best_result)
     jsonld_payload = {}
+    retrieval_failed = False
     if class_id:
         try:
             jsonld_response = requests.get(
@@ -1305,6 +1840,7 @@ def fetch_folio_project_match(cluster_name: str, min_score: float = FOLIO_MATCH_
             jsonld_response.raise_for_status()
             jsonld_payload = jsonld_response.json()
         except Exception:
+            retrieval_failed = True
             jsonld_payload = {}
 
     folio_title = extract_folio_title(jsonld_payload) if isinstance(jsonld_payload, dict) else ""
@@ -1320,7 +1856,8 @@ def fetch_folio_project_match(cluster_name: str, min_score: float = FOLIO_MATCH_
         "folio_description": folio_description,
         "folio_class_id": class_id,
         "folio_match_score": round(float(best_score), 3),
-        "folio_match_method": "prefix_search_top_match",
+        "folio_match_method": "folio_retrieval_failed" if retrieval_failed else "prefix_search_top_match",
+        "folio_api_status": "connection_failed" if retrieval_failed and not folio_description else "matched",
         "folio_search_url": f"{search_url}?query={quote(clean_cluster_name)}",
     }
 
@@ -1381,6 +1918,55 @@ def count_label_words(label: object) -> int:
     return len(tokenize_text(label))
 
 
+PROJECT_LIKE_PRACTICE_AREA_TERMS = {
+    "divorce", "dissolution", "custody", "support", "parenting", "probate", "will", "trust",
+    "estate", "lease", "contract", "agreement", "nda", "trademark", "copyright", "immigration",
+    "visa", "litigation", "dispute", "settlement", "incorporation", "compliance",
+}
+
+BROAD_PRACTICE_AREA_PROJECT_NAMES = {
+    "family", "personal family", "employment", "labor employment", "real estate", "business",
+    "corporate", "commercial", "litigation", "civil litigation", "immigration", "tax",
+    "intellectual property", "estate", "trust estates", "personal injury",
+}
+
+
+def label_has_project_like_terms(label: object) -> bool:
+    tokens = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(label))))
+    return bool(tokens.intersection(PROJECT_LIKE_PRACTICE_AREA_TERMS))
+
+
+def map_project_like_label_to_folio(label: str, folio_labels: list[str]) -> str | None:
+    if not folio_labels:
+        return None
+    tokens = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(label))))
+    preferred_labels = []
+    if tokens.intersection({"divorce", "dissolution", "custody", "support", "parenting"}):
+        preferred_labels = ["Personal and Family Law", "Family Law", "Family"]
+    elif tokens.intersection({"will", "trust", "probate", "estate"}):
+        preferred_labels = ["Estate Planning", "Trusts and Estates", "Trusts And Estates"]
+    elif tokens.intersection({"lease", "property"}):
+        preferred_labels = ["Real Estate Law", "Real Estate"]
+    elif tokens.intersection({"contract", "agreement", "nda", "incorporation", "business", "corporate"}):
+        preferred_labels = ["Contract Law", "Business Law", "Corporate Law", "Commercial Law"]
+    elif tokens.intersection({"trademark", "copyright", "intellectual"}):
+        preferred_labels = ["Intellectual Property Law", "Intellectual Property"]
+    elif tokens.intersection({"immigration", "visa"}):
+        preferred_labels = ["Immigration Law", "Immigration"]
+    elif tokens.intersection({"litigation", "dispute", "settlement"}):
+        preferred_labels = ["Dispute Resolution Law", "Litigation", "Civil Litigation"]
+    elif tokens.intersection({"tax"}):
+        preferred_labels = ["Tax Law", "Tax"]
+
+    for preferred_label in preferred_labels:
+        preferred_tokens = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(preferred_label))))
+        for folio_label in folio_labels:
+            folio_tokens = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(folio_label))))
+            if preferred_tokens and preferred_tokens.issubset(folio_tokens):
+                return folio_label
+    return None
+
+
 def build_firm_specific_taxonomy_labels(
     matter_df: pd.DataFrame,
     practice_area_col: str | None,
@@ -1408,6 +1994,23 @@ def build_firm_specific_taxonomy_labels(
         if mapped_label:
             classification_label = mapped_label
             action = "mapped_to_folio"
+        elif label_has_project_like_terms(cleaned_label):
+            mapped_project_label = map_project_like_label_to_folio(cleaned_label, folio_labels)
+            if mapped_project_label:
+                classification_label = mapped_project_label
+                mapped_label = mapped_project_label
+                score = 1.0
+                action = "mapped_project_like_to_folio"
+            else:
+                mapping_rows.append({
+                    "raw_practice_area": raw_value,
+                    "cleaned_practice_area": cleaned_label,
+                    "matched_folio_label": "",
+                    "folio_match_score": round(float(score), 3),
+                    "action": "dropped_project_like_practice_area",
+                    "final_taxonomy_label": "",
+                })
+                continue
         elif count_label_words(cleaned_label) > 4:
             mapping_rows.append({
                 "raw_practice_area": raw_value,
@@ -1961,6 +2564,40 @@ def infer_canonical_project_label(label: str, top_terms: str = "", examples: str
     return cleaned_label.title()
 
 
+def extract_legal_project_acronyms(value: object) -> list[str]:
+    raw_text = str(value or "").lower()
+    raw_text = raw_text.replace("m&a", " ma ")
+    tokens = re.findall(r"[a-z0-9]+", raw_text)
+    acronyms = []
+    for token in tokens:
+        if token in LEGAL_PROJECT_ACRONYMS:
+            acronyms.append(token)
+    return acronyms
+
+
+def simplify_project_name_from_acronyms(project_name: str, cluster_df: pd.DataFrame, matter_name_col: str) -> str:
+    project_acronyms = extract_legal_project_acronyms(project_name)
+    if project_acronyms:
+        chosen = sorted(project_acronyms, key=lambda token: (len(token), token), reverse=True)[0]
+        return LEGAL_PROJECT_ACRONYMS[chosen]
+
+    if matter_name_col not in cluster_df.columns:
+        return project_name
+
+    acronym_counts = Counter()
+    for value in cluster_df[matter_name_col].fillna("").astype(str):
+        acronym_counts.update(extract_legal_project_acronyms(value))
+    if not acronym_counts:
+        return project_name
+
+    chosen = sorted(
+        acronym_counts.items(),
+        key=lambda item: (item[1], len(item[0]), item[0]),
+        reverse=True,
+    )[0][0]
+    return LEGAL_PROJECT_ACRONYMS[chosen]
+
+
 def infer_specific_subproject_label(parent_project: str, label: str, top_terms: str = "", examples: str = "") -> str:
     cleaned_label = str(label).strip() if label else ""
     cleaned_parent = str(parent_project).strip()
@@ -2142,6 +2779,99 @@ def summarize_practice_area_context(cluster_df: pd.DataFrame, practice_area_col:
     }
 
 
+def value_has_legal_signal(value: object) -> bool:
+    tokens = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(value))))
+    if tokens.intersection(BASE_LEGAL_SERVICE_KEYWORDS):
+        return True
+    phrase_keys = extract_consecutive_phrase_keys(value)
+    return bool(phrase_keys.intersection(CLUSTER_ROOT_PHRASES))
+
+
+def cluster_text_has_project_name(cluster_df: pd.DataFrame, project_name: str, columns: list[str | None]) -> bool:
+    project_text = normalize_legal_text_for_clustering(project_name)
+    if not project_text:
+        return False
+    for column in columns:
+        if not column or column not in cluster_df.columns:
+            continue
+        for value in cluster_df[column].dropna().astype(str):
+            value_text = normalize_legal_text_for_clustering(value)
+            if f" {project_text} " in f" {value_text} ":
+                return True
+    return False
+
+
+def has_useful_structured_project_signal(cluster_df: pd.DataFrame, columns: list[str | None]) -> bool:
+    for column in columns:
+        if not column or column not in cluster_df.columns:
+            continue
+        if cluster_df[column].dropna().astype(str).apply(value_has_legal_signal).any():
+            return True
+    return False
+
+
+def suggest_project_name_from_time_entries(cluster_df: pd.DataFrame, text_col: str | None) -> str | None:
+    if not text_col or text_col not in cluster_df.columns:
+        return None
+    top_terms = get_top_terms_from_text(cluster_df[text_col], ngram_n=1, top_n=12)
+    top_bigrams = get_top_terms_from_text(cluster_df[text_col], ngram_n=2, top_n=12)
+    top_trigrams = get_top_terms_from_text(cluster_df[text_col], ngram_n=3, top_n=8)
+    legal_phrases = [
+        phrase for phrase in top_bigrams + top_trigrams
+        if any(token in BASE_LEGAL_SERVICE_KEYWORDS for token in phrase.split())
+    ]
+    if legal_phrases:
+        return legal_phrases[0].title()
+    legal_terms = [term for term in top_terms if term in BASE_LEGAL_SERVICE_KEYWORDS]
+    if legal_terms:
+        return suggest_project_name(legal_terms, top_bigrams).title()
+    return None
+
+
+def is_broad_practice_area_project_name(project_name: str, practice_area_value: object = "") -> bool:
+    project_key = normalize_legal_text_for_clustering(project_name)
+    if not project_key:
+        return False
+    if project_key in BROAD_PRACTICE_AREA_PROJECT_NAMES:
+        return True
+    practice_key = normalize_legal_text_for_clustering(practice_area_value)
+    if practice_key and (project_key == practice_key or f" {project_key} " in f" {practice_key} "):
+        return not label_has_project_like_terms(project_name)
+    return False
+
+
+def refine_project_name_with_context(
+    project_name: str,
+    cluster_df: pd.DataFrame,
+    matter_name_col: str,
+    practice_area_col: str | None,
+    matter_category_col: str | None,
+    text_col: str | None,
+) -> str:
+    structured_cols = [matter_name_col, practice_area_col, matter_category_col]
+    practice_area_value = ""
+    if practice_area_col and practice_area_col in cluster_df.columns:
+        values = cluster_df[practice_area_col].dropna().astype(str).map(str.strip).loc[lambda s: s != ""]
+        practice_area_value = values.mode().iloc[0] if not values.empty else ""
+
+    if is_broad_practice_area_project_name(project_name, practice_area_value):
+        time_entry_name = suggest_project_name_from_time_entries(cluster_df, text_col)
+        if time_entry_name and normalize_legal_text_for_clustering(time_entry_name) != normalize_legal_text_for_clustering(project_name):
+            return time_entry_name
+        return "Unclear / Needs Review"
+
+    count_col = "matter_id_for_count" if "matter_id_for_count" in cluster_df.columns else matter_name_col
+    is_tiny_cluster = cluster_df[count_col].nunique() <= 2
+    direct_project_signal = cluster_text_has_project_name(cluster_df, project_name, structured_cols)
+    useful_structured_signal = has_useful_structured_project_signal(cluster_df, structured_cols)
+    if is_tiny_cluster and not direct_project_signal and not useful_structured_signal:
+        time_entry_name = suggest_project_name_from_time_entries(cluster_df, text_col)
+        if time_entry_name:
+            return time_entry_name
+
+    return project_name
+
+
 def analyze_time_entry_keywords(value: object, top_n: int = 8) -> dict[str, list[str]]:
     tokens = remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(value)))
     return {
@@ -2305,6 +3035,7 @@ def create_project_clusters(
     status_box=None,
     text_col: str | None = None,
     practice_area_col: str | None = None,
+    matter_category_col: str | None = None,
     cluster_prefix: str = "cluster",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     working = df.copy()
@@ -2506,6 +3237,15 @@ def create_project_clusters(
             display_label = project_name
         else:
             project_name = infer_canonical_project_label(project_name, combined_terms, combined_examples)
+            project_name = refine_project_name_with_context(
+                project_name,
+                cluster_df,
+                matter_name_col=matter_name_col,
+                practice_area_col=practice_area_col,
+                matter_category_col=matter_category_col,
+                text_col=text_col,
+            )
+            project_name = simplify_project_name_from_acronyms(project_name, cluster_df, matter_name_col)
             display_label = f"{project_name} · {cluster_prefix.title()} {cluster_id}"
 
         examples = format_examples_for_label(
@@ -2785,7 +3525,7 @@ def aggregate_project_categories(cluster_summary: pd.DataFrame) -> pd.DataFrame:
     if "folio_verified" in cluster_summary.columns:
         agg_spec["folio_verified"] = ("folio_verified", "max")
 
-    for folio_col in ["folio_title", "folio_description", "folio_class_id", "folio_match_method", "folio_search_url"]:
+    for folio_col in ["folio_title", "folio_description", "folio_class_id", "folio_match_method", "folio_api_status", "folio_search_url"]:
         if folio_col in cluster_summary.columns:
             agg_spec[folio_col] = (
                 folio_col,
@@ -2861,6 +3601,96 @@ def build_project_ring_chart(project_summary: pd.DataFrame, color_map: dict[str,
     return fig
 
 
+def text_contains_phrase(value: object, phrase: object) -> bool:
+    clean_value = clean_text(value)
+    clean_phrase = clean_text(phrase)
+    if not clean_value or not clean_phrase:
+        return False
+    return f" {clean_phrase} " in f" {clean_value} "
+
+
+def build_project_purity_ring(match_pct: float, term: str, project_name: str) -> go.Figure:
+    safe_pct = max(0.0, min(100.0, float(match_pct)))
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                values=[safe_pct, 100 - safe_pct],
+                hole=0.68,
+                sort=False,
+                direction="clockwise",
+                marker=dict(colors=[ALTFEE_TEAL, "#E6E6E6"], line=dict(color=ALTFEE_BG, width=3)),
+                textinfo="none",
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        ]
+    )
+    fig.update_layout(
+        title=dict(text=f"Term Presence in {project_name}", x=0.5, xanchor="center", font=dict(size=18)),
+        height=360,
+        margin=dict(l=20, r=20, t=55, b=20),
+        paper_bgcolor=ALTFEE_BG,
+        plot_bgcolor=ALTFEE_BG,
+        annotations=[
+            dict(
+                text=f"<b>{safe_pct:.0f}%</b>",
+                x=0.5,
+                y=0.5,
+                font=dict(size=32, color=ALTFEE_TEXT),
+                showarrow=False,
+            )
+        ],
+    )
+    return fig
+
+
+def project_name_collision_stats(project_df: pd.DataFrame, project_name: str, all_project_names: list[str], matter_name_col: str) -> dict[str, object]:
+    if project_df.empty or matter_name_col not in project_df.columns:
+        return {
+            "collision_pct": 0.0,
+            "cooccurrence_pct": 0.0,
+            "impurity_pct": 0.0,
+            "top_colliding_projects": [],
+        }
+
+    count_col = "matter_id_for_count" if "matter_id_for_count" in project_df.columns else matter_name_col
+    total_matters = max(project_df[count_col].nunique(), 1)
+    own_project_present = project_df[matter_name_col].apply(lambda value: text_contains_phrase(value, project_name))
+
+    other_projects = [
+        name for name in all_project_names
+        if name != project_name and normalize_legal_text_for_clustering(name) and not is_flat_fee_project(name)
+    ]
+    collision_project_counts = Counter()
+    collision_matter_ids = set()
+    cooccurrence_matter_ids = set()
+    impurity_matter_ids = set()
+
+    for row_position, (_, row) in enumerate(project_df.iterrows()):
+        matter_name = row.get(matter_name_col, "")
+        matter_id = row.get(count_col, row_position)
+        matched_other_projects = [
+            other_project for other_project in other_projects
+            if text_contains_phrase(matter_name, other_project)
+        ]
+        if not matched_other_projects:
+            continue
+        collision_matter_ids.add(matter_id)
+        for other_project in matched_other_projects:
+            collision_project_counts[other_project] += 1
+        if bool(own_project_present.iloc[row_position]):
+            cooccurrence_matter_ids.add(matter_id)
+        else:
+            impurity_matter_ids.add(matter_id)
+
+    return {
+        "collision_pct": len(collision_matter_ids) / total_matters * 100,
+        "cooccurrence_pct": len(cooccurrence_matter_ids) / total_matters * 100,
+        "impurity_pct": len(impurity_matter_ids) / total_matters * 100,
+        "top_colliding_projects": collision_project_counts.most_common(5),
+    }
+
+
 def render_project_ranking(project_summary: pd.DataFrame, color_map: dict[str, str] | None = None) -> None:
     top_five = project_summary.head(5).copy()
     rows = []
@@ -2869,11 +3699,11 @@ def render_project_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
         number_class = ""
         if rank <= 3:
             number_class = f" ranking-number-{rank}"
-        folio_badge = " <span class='folio-badge'>FOLIO</span>" if bool(row.get("folio_verified", False)) else ""
+        folio_marker = " <span class='folio-plus'>+</span>" if bool(row.get("folio_verified", False)) else ""
         
         rows.append(
             f"<div class='ranking-row'>"
-            f"<span class='ranking-name'><span class='{number_class}'>{rank}.</span> {row['project_name']}{folio_badge}</span>"
+            f"<span class='ranking-name'><span class='{number_class}'>{rank}.</span> {row['project_name']}{folio_marker}</span>"
             f"<span class='ranking-value'>{row['total_matters']:,.0f}</span>"
             f"</div>"
         )
@@ -2905,7 +3735,7 @@ def render_revenue_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
         value_class = ""
         suffix = ""
         number_class = ""
-        folio_badge = " <span class='folio-badge'>FOLIO</span>" if bool(row.get("folio_verified", False)) else ""
+        folio_marker = " <span class='folio-plus'>+</span>" if bool(row.get("folio_verified", False)) else ""
 
         if row["project_name"] == top_total_project:
             name_class = "ranking-bold-black"
@@ -2919,7 +3749,7 @@ def render_revenue_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
 
         rows.append(
             f"<div class='ranking-row'>"
-            f"<span class='ranking-name {name_class}'>{rank}. {row['project_name']}{suffix}{folio_badge}</span>"
+            f"<span class='ranking-name {name_class}'>{rank}. {row['project_name']}{suffix}{folio_marker}</span>"
             f"<span class='ranking-value {value_class}'>{format_currency(row['total_billing'])}</span>"
             f"</div>"
         )
@@ -3194,7 +4024,7 @@ def build_effort_trend_chart(cluster_df: pd.DataFrame, date_col: str, granularit
 
 
 # --- Helper functions for project option labels ---
-FOLIO_OPTION_SUFFIX = " · FOLIO"
+FOLIO_OPTION_SUFFIX = " +"
 SUBPROJECT_OPTION_SUFFIX = " *"
 
 
@@ -3211,30 +4041,49 @@ def strip_project_option_label(option_label: str) -> str:
     return option_label.replace(SUBPROJECT_OPTION_SUFFIX, "").replace(FOLIO_OPTION_SUFFIX, "")
 
 
-def render_project_folio_header(project_name: str, project_row: pd.Series | None) -> None:
-    if project_row is None or not bool(project_row.get("folio_verified", False)):
-        return
-
-    folio_title = str(project_row.get("folio_title", "") or "").strip()
-    folio_description = str(project_row.get("folio_description", "") or "").strip()
-    folio_class_id = str(project_row.get("folio_class_id", "") or "").strip()
-    folio_score = project_row.get("folio_match_score", np.nan)
+def render_project_report_heading(project_name: str, project_row: pd.Series | None, folio_mapper_active: bool) -> None:
+    folio_title = ""
+    folio_description = ""
+    folio_api_status = ""
+    folio_verified = False
+    if project_row is not None:
+        folio_title = str(project_row.get("folio_title", "") or "").strip()
+        folio_description = str(project_row.get("folio_description", "") or "").strip()
+        folio_api_status = str(project_row.get("folio_api_status", "") or "").strip()
+        folio_verified = bool(project_row.get("folio_verified", False))
 
     title_html = escape(folio_title or project_name)
-    description_html = escape(folio_description) if folio_description else "FOLIO matched this project name to a standardized legal ontology concept."
-    class_label = escape(folio_class_id) if folio_class_id else "FOLIO concept"
-    score_label = "" if pd.isna(folio_score) else f" · match {float(folio_score):.0%}"
+    description_html = ""
+    if folio_mapper_active:
+        if folio_verified:
+            if folio_description:
+                description_html = escape(folio_description)
+            else:
+                description_html = "No description available"
+        elif folio_api_status == "connection_failed":
+            description_html = "API connection failed"
+
+    badge_html = '<span class="folio-plus">+</span>' if folio_verified else ""
+    meta_html = (
+        '<div class="folio-project-meta">+ FOLIO verified</div>'
+        if folio_verified
+        else ""
+    )
+    description_block = (
+        f'<div class="folio-project-description">{description_html}</div>'
+        if description_html
+        else ""
+    )
 
     st.markdown(
         f"""
         <div class="folio-project-header">
             <div class="folio-project-heading">
-                <h3>{escape(project_name)}</h3>
-                <span class="folio-badge">FOLIO verified</span>
+                <h3>{title_html}</h3>
+                {badge_html}
             </div>
-            <div class="folio-project-title">{title_html}</div>
-            <div class="folio-project-description">{description_html}</div>
-            <div class="folio-project-meta">{class_label}{score_label}</div>
+            {description_block}
+            {meta_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -3324,6 +4173,7 @@ rate_col = columns["avg_rate"]
 entries_col = columns["n_time_entries"]
 users_col = columns["n_unique_users"]
 practice_area_col = columns["practice_area"]
+matter_category_col = columns["matter_category"]
 time_entry_text_col = columns["all_time_entry_text"]
 
 matter_df[billing_col] = pd.to_numeric(matter_df[billing_col], errors="coerce").fillna(0)
@@ -3362,7 +4212,12 @@ else:
 
 default_granularity = choose_default_granularity(matter_df["parsed_date"])
 
-overview_tab, clustering_tab = st.tabs(["Initial Overview", "Cluster Analysis"])
+overview_tab, clustering_tab, matter_search_tab, project_purity_tab = st.tabs([
+    "Initial Overview",
+    "Cluster Analysis",
+    "Matter Search",
+    "Project Purity",
+])
 
 with overview_tab:
     st.markdown(f"### {account_name}")
@@ -3426,6 +4281,178 @@ with overview_tab:
 
     with st.expander("Preview uploaded data"):
         st.dataframe(matter_df.drop(columns=["parsed_date"], errors="ignore").head(50), use_container_width=True)
+
+with matter_search_tab:
+    st.markdown("### Matter Search")
+    if "clustered_matters" not in st.session_state:
+        st.info("Run the cluster analysis first to search assigned matters.")
+    else:
+        search_df = st.session_state["clustered_matters"].copy()
+        search_query = st.text_input("Search by matter name", key="matter_search_query")
+        if search_query.strip():
+            result_df = search_df[
+                search_df[matter_name_col]
+                .fillna("")
+                .astype(str)
+                .str.contains(re.escape(search_query.strip()), case=False, na=False)
+            ].copy()
+        else:
+            result_df = search_df.head(50).copy()
+
+        if result_df.empty:
+            st.info("No matters matched that search.")
+        else:
+            result_df["_matter_search_label"] = result_df.apply(
+                lambda row: f"{row.get(matter_name_col, 'Unnamed matter')} | {row.get(matter_col, row.name)}",
+                axis=1,
+            )
+            display_cols = [matter_name_col, "project_name"]
+            if hours_col and hours_col in result_df.columns:
+                display_cols.append(hours_col)
+            elif "numeric_hours" in result_df.columns:
+                display_cols.append("numeric_hours")
+            if billing_col and billing_col in result_df.columns:
+                display_cols.append(billing_col)
+            elif "numeric_billing" in result_df.columns:
+                display_cols.append("numeric_billing")
+
+            st.dataframe(result_df[display_cols].head(100), use_container_width=True, hide_index=True)
+            selected_matter_label = st.selectbox(
+                "Select a matter",
+                options=result_df["_matter_search_label"].head(100).tolist(),
+                key="matter_search_selected_matter",
+            )
+
+            selected_row = result_df[result_df["_matter_search_label"] == selected_matter_label].iloc[0]
+            assigned_project = selected_row.get("project_name", "Unclear / Needs Review")
+            project_df = search_df[search_df["project_name"] == assigned_project].copy()
+            selected_hours = pd.to_numeric(selected_row.get("numeric_hours", selected_row.get(hours_col, np.nan)), errors="coerce")
+            selected_billing = pd.to_numeric(selected_row.get("numeric_billing", selected_row.get(billing_col, np.nan)), errors="coerce")
+            project_hours = pd.to_numeric(project_df.get("numeric_hours", pd.Series(dtype=float)), errors="coerce").dropna()
+            project_billing = pd.to_numeric(project_df.get("numeric_billing", pd.Series(dtype=float)), errors="coerce").dropna()
+            project_count = project_df["matter_id_for_count"].nunique() if "matter_id_for_count" in project_df.columns else len(project_df)
+
+            def percentile_label(value: float, series: pd.Series) -> str:
+                if pd.isna(value) or series.empty:
+                    return "Not available"
+                return f"{(series.le(value).mean() * 100):.0f}th percentile"
+
+            detail_cols = st.columns(3)
+            with detail_cols[0]:
+                render_metric_card("Assigned Project", str(assigned_project), "Current cluster label")
+            with detail_cols[1]:
+                render_metric_card(
+                    "Total Billing",
+                    format_currency(selected_billing) if not pd.isna(selected_billing) else "Billing not available",
+                    percentile_label(selected_billing, project_billing),
+                )
+            with detail_cols[2]:
+                render_metric_card(
+                    "Total Hours",
+                    format_number(selected_hours) if not pd.isna(selected_hours) else "Hours not available",
+                    percentile_label(selected_hours, project_hours),
+                )
+
+            project_cols = st.columns(3)
+            with project_cols[0]:
+                render_metric_card("Project Matters", format_number(project_count), "Matter count in assigned project")
+            with project_cols[1]:
+                render_metric_card(
+                    "Project Avg. Hours",
+                    format_number(project_hours.mean()) if not project_hours.empty else "Hours not available",
+                    "Average within assigned project",
+                )
+            with project_cols[2]:
+                render_metric_card(
+                    "Project Avg. Billing",
+                    format_currency(project_billing.mean()) if not project_billing.empty else "Billing not available",
+                    "Average within assigned project",
+                )
+
+with project_purity_tab:
+    st.markdown("### Project Purity")
+    if "clustered_matters" not in st.session_state:
+        st.info("Run the cluster analysis first to inspect project purity.")
+    else:
+        purity_df = st.session_state["clustered_matters"].copy()
+        project_names = (
+            purity_df["project_name"]
+            .dropna()
+            .astype(str)
+            .drop_duplicates()
+            .sort_values()
+            .tolist()
+        )
+        if not project_names:
+            st.info("No project clusters are available yet.")
+        else:
+            purity_controls = st.columns((1.2, 1.4))
+            with purity_controls[0]:
+                selected_purity_project = st.selectbox(
+                    "Project cluster",
+                    options=project_names,
+                    key="project_purity_project_selector",
+                )
+            with purity_controls[1]:
+                purity_term = st.text_input(
+                    "Term to test",
+                    value=selected_purity_project,
+                    key="project_purity_term_input",
+                )
+
+            selected_purity_df = purity_df[purity_df["project_name"] == selected_purity_project].copy()
+            count_col = "matter_id_for_count" if "matter_id_for_count" in selected_purity_df.columns else matter_name_col
+            total_project_matters = max(selected_purity_df[count_col].nunique(), 1)
+            term_match_matter_ids = set(
+                selected_purity_df.loc[
+                    selected_purity_df[matter_name_col].apply(lambda value: text_contains_phrase(value, purity_term)),
+                    count_col,
+                ].tolist()
+            )
+            term_match_pct = len(term_match_matter_ids) / total_project_matters * 100
+
+            top_terms = get_top_terms_from_text(selected_purity_df[matter_name_col], ngram_n=1, top_n=5)
+            top_bigrams = get_top_terms_from_text(selected_purity_df[matter_name_col], ngram_n=2, top_n=5)
+            collision_stats = project_name_collision_stats(
+                selected_purity_df,
+                selected_purity_project,
+                project_names,
+                matter_name_col,
+            )
+
+            purity_layout = st.columns((1, 1.15))
+            with purity_layout[0]:
+                st.plotly_chart(
+                    build_project_purity_ring(term_match_pct, purity_term, selected_purity_project),
+                    use_container_width=True,
+                )
+            with purity_layout[1]:
+                metric_cols = st.columns(3)
+                with metric_cols[0]:
+                    render_metric_card("Matters", format_number(total_project_matters), "Selected project")
+                with metric_cols[1]:
+                    render_metric_card("Term Match", f"{term_match_pct:.0f}%", "Matter names containing term")
+                with metric_cols[2]:
+                    render_metric_card("Project Collision", f"{collision_stats['collision_pct']:.0f}%", "Matter names containing another project")
+
+                detail_cols = st.columns(2)
+                with detail_cols[0]:
+                    st.markdown("#### Top Terms")
+                    st.write(", ".join(top_terms) if top_terms else "No terms found.")
+                    st.markdown("#### Top Bigrams")
+                    st.write(", ".join(top_bigrams) if top_bigrams else "No bigrams found.")
+                with detail_cols[1]:
+                    st.markdown("#### Collision Detail")
+                    st.write(f"Co-occurrence: {collision_stats['cooccurrence_pct']:.0f}%")
+                    st.write(f"Impurity: {collision_stats['impurity_pct']:.0f}%")
+                    if collision_stats["top_colliding_projects"]:
+                        collision_df = pd.DataFrame(
+                            collision_stats["top_colliding_projects"],
+                            columns=["other_project", "matter_count"],
+                        )
+                        st.dataframe(collision_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.write("No other project names found in this project's matter names.")
 
 with clustering_tab:
     st.markdown("### Cluster Analysis")
@@ -3515,6 +4542,7 @@ with clustering_tab:
         st.session_state.pop("firm_taxonomy_labels", None)
         st.session_state.pop("taxonomy_candidate_source_map", None)
         st.session_state.pop("enrich_with_folio", None)
+        st.session_state.pop("folio_enrichment_version", None)
 
         progress_bar = st.progress(0)
         status_box = st.empty()
@@ -3527,7 +4555,9 @@ with clustering_tab:
                 use_ai=use_ai,
                 progress_bar=progress_bar,
                 status_box=status_box,
+                text_col=time_entry_text_col,
                 practice_area_col=practice_area_col,
+                matter_category_col=matter_category_col,
             )
 
         if cluster_summary.empty:
@@ -3566,6 +4596,7 @@ with clustering_tab:
             st.session_state["firm_taxonomy_labels"] = firm_taxonomy_labels
             st.session_state["taxonomy_candidate_source_map"] = taxonomy_candidate_source_map
             st.session_state["enrich_with_folio"] = enrich_with_folio
+            st.session_state["folio_enrichment_version"] = FOLIO_CACHE_VERSION if enrich_with_folio else None
 
     if "cluster_summary" not in st.session_state or "clustered_matters" not in st.session_state:
         st.info("Run the cluster analysis to see project names, charts, and cluster details.")
@@ -3573,6 +4604,17 @@ with clustering_tab:
 
     cluster_summary = st.session_state["cluster_summary"]
     clustered_matters = st.session_state["clustered_matters"]
+
+    if (
+        st.session_state.get("enrich_with_folio", False)
+        and st.session_state.get("folio_enrichment_version") != FOLIO_CACHE_VERSION
+    ):
+        with st.spinner("Refreshing FOLIO enrichment..."):
+            cluster_summary = enrich_clusters_with_folio(cluster_summary.drop(columns=[
+                col for col in cluster_summary.columns if col.startswith("folio_")
+            ], errors="ignore"))
+        st.session_state["cluster_summary"] = cluster_summary
+        st.session_state["folio_enrichment_version"] = FOLIO_CACHE_VERSION
 
     if "predicted_taxonomy_level" in cluster_summary.columns:
         cluster_summary = validate_taxonomy_predictions(cluster_summary, firm_taxonomy_labels)
@@ -3678,8 +4720,6 @@ with clustering_tab:
     selected_project_rows = project_summary[project_summary["project_name"] == selected_project]
     selected_project_row = selected_project_rows.iloc[0] if not selected_project_rows.empty else None
 
-    render_project_folio_header(selected_project, selected_project_row)
-
     if "predicted_taxonomy_level" in project_summary.columns:
         selected_taxonomy_value = (
             project_summary.loc[
@@ -3772,6 +4812,12 @@ with clustering_tab:
             label_visibility="collapsed",
             key="project_detail_time_grouping_radio",
         )
+
+    render_project_report_heading(
+        selected_project,
+        selected_project_row,
+        bool(st.session_state.get("enrich_with_folio", False)),
+    )
 
     detail = summarize_cluster_detail(selected_cluster_df)
 
