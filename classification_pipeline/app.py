@@ -495,560 +495,52 @@ def render_missing_columns(missing: list[str]) -> None:
 
 
 BASE_LEGAL_SERVICE_KEYWORDS = {
-    # Generic legal work
-    "agreement", "agreements", "contract", "contracts", "document", "documents",
-    "draft", "drafting", "review", "revision", "revisions", "negotiation", "negotiations",
-    "advice", "advisory", "consultation", "counsel", "opinion", "memo", "memorandum",
-    "letter", "letters", "notice", "notices", "filing", "filings", "application", "applications",
-    "registration", "registrations", "renewal", "renewals", "amendment", "amendments",
-    "assignment", "assignments", "transfer", "transfers", "transaction", "transactions",
-    "closing", "diligence", "due", "escrow", "consent", "waiver", "release", "certificate",
-    "certificates", "resolution", "resolutions", "bylaw", "bylaws", "minute", "minutes",
-
-    # Commercial contracts
-    "lease", "leases", "leasing", "nda", "mnda", "confidentiality", "noncompete",
-    "nonsolicit", "solicitation", "contractor", "vendor", "supplier", "customer",
-    "client", "service", "services", "licensing", "license", "licenses", "subscription",
-    "saas", "software", "technology", "terms", "policy", "policies", "privacy",
-    "data", "processing", "dpa", "msa", "sow", "loa", "loi", "mou", "purchase",
-    "sale", "sales", "distribution", "reseller", "franchise", "partnership",
-    "joint", "venture", "sponsorship", "manufacturing", "supply", "procurement",
-
-    # Corporate / business
-    "incorporation", "incorporate", "incorporated", "corporate", "corporation",
-    "company", "companies", "business", "startup", "startups", "shareholder",
-    "shareholders", "director", "directors", "officer", "officers", "board",
-    "governance", "reorganization", "reorg", "amalgamation", "merger", "acquisition",
-    "m&a", "ma", "asset", "assets", "share", "shares", "equity", "securities",
-    "financing", "finance", "loan", "loans", "debt", "credit", "investment",
-    "investor", "investors", "subscription", "option", "options", "warrant",
-    "warrants", "cap", "capitalization", "dividend", "dissolution", "windup",
-    "wind-up", "opco", "holdco", "subsidiary", "affiliate",
-
-    # Estate / trust / planning
-    "estate", "estates", "probate", "will", "wills", "trust", "trusts",
-    "poa", "power", "attorney", "representation", "executor", "executors",
-    "administrator", "administration", "beneficiary", "beneficiaries", "inheritance",
-    "succession", "guardianship", "guardian", "codicil", "capacity", "incapacity",
-    "planning", "elder", "eldercare",
-
-    # Litigation / dispute resolution
-    "litigation", "dispute", "disputes", "claim", "claims", "settlement",
-    "court", "motion", "motions", "pleading", "pleadings", "action", "actions",
-    "lawsuit", "suit", "trial", "appeal", "appeals", "hearing", "hearings",
-    "mediation", "mediations", "arbitration", "arbitrations", "adr", "injunction",
-    "injunctive", "judgment", "judgement", "default", "summary", "discovery",
-    "deposition", "depositions", "affidavit", "affidavits", "evidence",
-    "witness", "witnesses", "defence", "defense", "plaintiff", "defendant",
-    "respondent", "applicant", "petition", "complaint", "counterclaim",
-    "crossclaim", "damages", "liability", "negligence", "breach", "enforcement",
-    "collection", "collections",
-
-    # Employment / workplace
-    "employment", "employee", "employees", "employer", "employers", "workplace",
-    "termination", "severance", "dismissal", "wrongful", "constructive",
-    "contractor", "independent", "consultant", "consulting", "offer", "offers",
-    "compensation", "bonus", "commission", "policy", "handbook", "workplace",
-    "harassment", "discrimination", "human", "resources", "hr", "labour", "labor",
-    "union", "grievance", "discipline", "investigation", "investigations",
-
-    # Immigration
-    "immigration", "visa", "visas", "permit", "permits", "citizenship",
-    "residency", "residence", "permanent", "temporary", "sponsorship",
-    "sponsor", "lmia", "work", "study", "student", "visitor", "pr", "trv",
-    "eta", "pgwp", "express", "entry", "refugee", "asylum", "inadmissibility",
-    "removal", "deportation", "naturalization", "border", "consulate",
-    "embassy",
-
-    # IP / technology
-    "trademark", "trademarks", "copyright", "copyrights", "ip", "intellectual",
-    "property", "patent", "patents", "brand", "branding", "logo", "logos",
-    "mark", "marks", "infringement", "licensing", "license", "assignment",
-    "technology", "software", "source", "code", "open", "opensource",
-    "domain", "domains", "trade", "secret", "secrets", "portfolio",
-
-    # Real estate / property
-    "real", "property", "realty", "estate", "land", "title", "mortgage",
-    "conveyance", "conveyancing", "purchase", "sale", "closing", "lease",
-    "leases", "leasing", "landlord", "tenant", "tenancy", "rent", "rental",
-    "commercial", "residential", "development", "zoning", "easement",
-    "covenant", "strata", "condo", "condominium", "hoa", "foreclosure",
-    "lien", "construction", "builder", "deficiency",
-
-    # Family
-    "family", "divorce", "dissolution", "separation", "custody", "support",
-    "child", "children", "parenting", "parental", "spousal", "alimony",
-    "maintenance", "guardianship", "access", "visitation", "adoption",
-    "marriage", "matrimonial", "prenup", "prenuptial", "cohabitation",
-    "postnuptial", "domestic", "violence", "restraining", "protection",
-
-    # Tax / regulatory / compliance
-    "tax", "taxes", "gst", "hst", "vat", "cra", "irs", "planning",
-    "compliance", "regulatory", "regulation", "regulations", "audit",
-    "audits", "appeal", "appeals", "filing", "return", "returns",
-    "election", "elections", "assessment", "reassessment", "penalty",
-    "penalties", "aml", "kyc", "fintrac", "ofac", "sanctions",
-    "privacy", "security", "cybersecurity", "breach", "incident",
-    "gdpr", "ccpa", "pipeda", "hipaa", "soc", "iso",
-
-    # Personal injury / insurance
-    "injury", "personal", "accident", "motor", "vehicle", "mva",
-    "insurance", "insurer", "coverage", "benefits", "disability",
-    "medical", "malpractice", "tort", "negligence", "slip", "fall",
-    "damages", "settlement",
-
-    # Criminal / administrative
-    "criminal", "charge", "charges", "offence", "offense", "bail",
-    "sentencing", "probation", "parole", "dui", "dwi", "impaired",
-    "traffic", "ticket", "licence", "license", "disciplinary",
-    "tribunal", "board", "commission", "hearing", "review",
-
-    # Bankruptcy / insolvency
-    "bankruptcy", "insolvency", "creditor", "creditors", "debtor",
-    "debtors", "receivership", "receiver", "restructuring", "proposal",
-    "liquidation", "foreclosure", "security", "secured", "priority",
-
-    # Nonprofit / charity
-    "nonprofit", "not-for-profit", "charity", "charitable", "foundation",
-    "society", "association", "bylaws", "governance", "donation",
-    "donor", "grant", "grants",
+    "agreement", "agreements", "contract", "contracts", "lease", "leasing", "nda", "mnda", "confidentiality",
+    "incorporation", "incorporate", "corporate", "corporation", "company", "business", "shareholder", "shareholders",
+    "estate", "probate", "will", "wills", "trust", "trusts", "poa", "power", "attorney", "representation",
+    "litigation", "dispute", "claim", "claims", "settlement", "court", "motion", "pleading", "pleadings",
+    "employment", "employee", "employer", "termination", "severance", "immigration", "visa", "permit",
+    "trademark", "copyright", "ip", "intellectual", "property", "real", "transaction", "purchase", "sale",
+    "family", "divorce", "dissolution", "separation", "custody", "support", "tax", "planning", "financing", "loan",
+    "privacy", "policy", "terms", "service", "licensing", "license", "review", "advisory", "compliance",
 }
 
 LEGAL_PROJECT_ACRONYMS = {
-    # Core contracts / commercial
+    # Very high-confidence legal service acronyms
     "nda": "NDA",
     "mnda": "MNDA",
-    "cda": "CDA",                      # Confidential Disclosure Agreement
-    "cnc": "CNC",                      # Confidentiality / non-compete, depending on firm usage
+    "baa": "BAA",          # Business Associate Agreement
+    "poa": "POA",
     "msa": "MSA",
     "sow": "SOW",
-    "loa": "LOA",
     "loi": "LOI",
     "mou": "MOU",
-    "term": "Term Sheet",
-    "ts": "Term Sheet",
-    "tsa": "TSA",                      # Transition Services Agreement
-    "dpa": "DPA",                      # Data Processing Agreement
-    "dsa": "DSA",                      # Data Sharing Agreement
-    "baa": "Business Associate Agreement",
-    "sla": "SLA",
-    "eula": "EULA",
-    "tos": "Terms of Service",
-    "tou": "Terms of Use",
-    "tc": "Terms and Conditions",
-    "tcs": "Terms and Conditions",
-    "saas": "SaaS",
-    "paas": "PaaS",
-    "iaas": "IaaS",
-    "msa_sow": "MSA / SOW",
-    "po": "Purchase Order",
-    "rfx": "RFX",
-    "rfp": "RFP",
-    "rfq": "RFQ",
-    "rfi": "RFI",
-    "qc": "Quality Control",
-    "qa": "Quality Assurance",
+    "dpa": "DPA",
 
-    # Corporate / M&A
+    # Common contract / transaction acronyms, but still potentially ambiguous
+    "spa": "SPA",
+    "apa": "APA",
+    "sha": "SHA",
+
+    # IP / dispute
+    "ip": "IP",
+    "tm": "TM",
+    "adr": "ADR",
+
+    # Existing one
+    "loa": "LOA",
+
+    # M&A
     "ma": "M&A",
     "m&a": "M&A",
-    "spa": "SPA",                      # Share Purchase Agreement / Sale Purchase Agreement
-    "apa": "APA",                      # Asset Purchase Agreement / Administrative Procedure Act
-    "bpsa": "Business Purchase and Sale Agreement",
-    "sha": "SHA",                      # Shareholders Agreement
-    "sa": "SA",                        # Shareholders / Subscription / Separation Agreement - ambiguous
-    "usa": "USA",                      # Unanimous Shareholders Agreement
-    "rofr": "ROFR",
-    "rofo": "ROFO",
-    "drag": "Drag-Along",
-    "tag": "Tag-Along",
-    "cap": "Cap Table",
-    "corp": "Corporate",
-    "inc": "Incorporation",
-    "coi": "Certificate of Incorporation",
-    "aoi": "Articles of Incorporation",
-    "aoa": "Articles of Association",
-    "bylaws": "Bylaws",
-    "ubo": "UBO",
-    "bo": "Beneficial Ownership",
-    "amalg": "Amalgamation",
-    "arrangement": "Plan of Arrangement",
-    "poa_corp": "Plan of Arrangement",
-    "opco": "OpCo",
-    "holdco": "HoldCo",
-    "jv": "JV",
-    "jva": "Joint Venture Agreement",
-    "lp": "LP",
-    "lpa": "Limited Partnership Agreement",
-    "gp": "GP",
-    "llc": "LLC",
-    "llp": "LLP",
-    "pllc": "PLLC",
-    "pc": "Professional Corporation",
-    "d&o": "Directors and Officers",
-    "dao": "DAO",
-
-    # Financing / securities / funds
-    "safe": "SAFE",
-    "note": "Convertible Note",
-    "cn": "Convertible Note",
-    "ppa": "PPA",                      # Purchase Price Allocation / Power Purchase Agreement
-    "ppm": "PPM",
-    "om": "Offering Memorandum",
-    "sub": "Subscription Agreement",
-    "sub_agmt": "Subscription Agreement",
-    "ipo": "IPO",
-    "rto": "Reverse Takeover",
-    "loans": "Loans",
-    "lsa": "Loan and Security Agreement",
-    "gsa": "General Security Agreement",
-    "psa_security": "Personal Security Agreement",
-    "debenture": "Debenture",
-    "warrant": "Warrant",
-    "rsu": "RSU",
-    "psu": "PSU",
-    "dsu": "DSU",
-    "eso": "ESO",
-    "esop": "ESOP",
-    "qsbs": "QSBS",
-    "vc": "Venture Capital",
-    "pe": "Private Equity",
-    "fund": "Fund",
-    "nav": "NAV",
-    "aif": "AIF",
-    "lpac": "LPAC",
-
-    # IP / tech
-    "ip": "IP",
-    "ipr": "IP Rights",
-    "tm": "TM",
-    "tmx": "Trademark",
-    "tm_app": "Trademark Application",
-    "tm_reg": "Trademark Registration",
-    "copyright": "Copyright",
-    "dmca": "DMCA",
-    "pat": "Patent",
-    "pct": "PCT",
-    "uspto": "USPTO",
-    "cipo": "CIPO",
-    "lic": "License",
-    "api": "API",
-    "oss": "OSS",
-    "foss": "FOSS",
-    "open_source": "Open Source",
-    "ecom": "E-Commerce",
-    "ai": "AI",
-    "ml": "ML",
-
-    # Privacy / healthcare / compliance
-    "gdpr": "GDPR",
-    "ccpa": "CCPA",
-    "cpra": "CPRA",
-    "pipeda": "PIPEDA",
-    "hipaa": "HIPAA",
-    "hitech": "HITECH",
-    "phi": "PHI",
-    "pii": "PII",
-    "pci": "PCI",
-    "pci_dss": "PCI DSS",
-    "soc": "SOC",
-    "soc1": "SOC 1",
-    "soc2": "SOC 2",
-    "iso": "ISO",
-    "iso27001": "ISO 27001",
-    "aml": "AML",
-    "kyc": "KYC",
-    "ctf": "CTF",
-    "ofac": "OFAC",
-    "fintrac": "FINTRAC",
-    "finra": "FINRA",
-    "sec": "SEC",
-    "osfi": "OSFI",
-    "fcac": "FCAC",
-    "casl": "CASL",
-    "foippa": "FOIPPA",
-    "glba": "GLBA",
-    "ferpa": "FERPA",
-    "coppa": "COPPA",
-
-    # Employment
-    "emp": "Employment",
-    "ea": "Employment Agreement",
-    "ica": "Independent Contractor Agreement",
-    "nca": "Non-Compete Agreement",
-    "nsa": "Non-Solicitation Agreement",
-    "esa": "Employment Standards Act",
-    "fmla": "FMLA",
-    "ada": "ADA",
-    "eeoc": "EEOC",
-    "osha": "OSHA",
-    "pip": "Performance Improvement Plan",
-    "hr": "HR",
-    "wcb": "WCB",
-    "wsib": "WSIB",
-    "wc": "Workers Compensation",
-    "severance": "Severance",
-    "termination": "Termination",
-
-    # Real estate / leasing / construction
-    "lo": "Lease Offer",
-    "lease": "Lease",
-    "psa": "Purchase and Sale Agreement",
-    "aps": "Agreement of Purchase and Sale",
-    "loi_re": "Real Estate Letter of Intent",
-    "loa_real_estate": "Lease Offer Agreement",
-    "roi": "Right of Inspection",
-    "strata": "Strata",
-    "hoa": "HOA",
-    "reo": "REO",
-    "cre": "Commercial Real Estate",
-    "res_re": "Residential Real Estate",
-    "p&s": "Purchase and Sale",
-    "cml": "Commercial Lease",
-    "rml": "Residential Lease",
-    "estoppel": "Estoppel Certificate",
-    "nsp": "Notice of Security Interest",
-    "lien": "Lien",
-    "builders_lien": "Builders Lien",
-    "cgl": "CGL",
-    "epc": "EPC",
-    "ppa_energy": "Power Purchase Agreement",
-
-    # Family / estate
-    "poa": "POA",
-    "epa": "Enduring Power of Attorney",
-    "lpa": "Lasting Power of Attorney",
-    "hcd": "Health Care Directive",
-    "ahcd": "Advance Health Care Directive",
-    "will": "Will",
-    "codicil": "Codicil",
-    "rep": "Representation Agreement",
-    "ra": "Representation Agreement",
-    "prenup": "Prenup",
-    "pna": "Prenuptial Agreement",
-    "postnup": "Postnuptial Agreement",
-    "cohab": "Cohabitation Agreement",
-    "sep": "Separation Agreement",
-    "sa_family": "Separation Agreement",
-    "div": "Divorce",
-    "custody": "Custody",
-    "cs": "Child Support",
-    "ss": "Spousal Support",
-    "guardianship": "Guardianship",
-    "probate": "Probate",
-    "loa_estate": "Letters of Administration",
-    "log": "Letters of Guardianship",
-
-    # Litigation / dispute
-    "adr": "ADR",
-    "arb": "Arbitration",
-    "med": "Mediation",
-    "lit": "Litigation",
-    "soc": "Statement of Claim",
-    "noc": "Notice of Civil Claim",
-    "nod": "Notice of Dispute",
-    "noa": "Notice of Application",
-    "nocc": "Notice of Civil Claim",
-    "rcc": "Response to Civil Claim",
-    "msj": "Motion for Summary Judgment",
-    "sj": "Summary Judgment",
-    "tro": "TRO",
-    "ro": "Restraining Order",
-    "inj": "Injunction",
-    "pi": "Preliminary Injunction",
-    "td": "Temporary Detention",
-    "disc": "Discovery",
-    "rfa": "Request for Admission",
-    "rfp": "Request for Production",
-    "rog": "Interrogatories",
-    "depo": "Deposition",
-    "aff": "Affidavit",
-    "settlement": "Settlement",
-    "msa_lit": "Mediated Settlement Agreement",
-    "jdgm": "Judgment",
-    "appeal": "Appeal",
-
-    # Immigration
-    "lmia": "LMIA",
-    "wp": "Work Permit",
-    "owp": "Open Work Permit",
-    "pgwp": "PGWP",
-    "sp": "Study Permit",
-    "pr": "Permanent Residence",
-    "trv": "TRV",
-    "eta": "eTA",
-    "ee": "Express Entry",
-    "pnp": "PNP",
-    "aor": "Acknowledgement of Receipt",
-    "copr": "Confirmation of Permanent Residence",
-    "ircc": "IRCC",
-    "cbsa": "CBSA",
-    "uscis": "USCIS",
-    "h1b": "H-1B",
-    "h4": "H-4",
-    "l1": "L-1",
-    "l2": "L-2",
-    "tn": "TN",
-    "ead": "EAD",
-    "i130": "I-130",
-    "i140": "I-140",
-    "i485": "I-485",
-    "i765": "I-765",
-    "i131": "I-131",
-    "n400": "N-400",
-    "rfe": "RFE",
-    "noid": "NOID",
-    "aos": "Adjustment of Status",
-
-    # Tax / finance
-    "cra": "CRA",
-    "irs": "IRS",
-    "gst": "GST",
-    "hst": "HST",
-    "vat": "VAT",
-    "ein": "EIN",
-    "itin": "ITIN",
-    "ssn": "SSN",
-    "tin": "TIN",
-    "tax": "Tax",
-    "t1": "T1",
-    "t2": "T2",
-    "t3": "T3",
-    "t4": "T4",
-    "w2": "W-2",
-    "w9": "W-9",
-    "1099": "1099",
-    "1040": "1040",
-    "1065": "1065",
-    "1120": "1120",
-    "1120s": "1120S",
-    "fbAR".lower(): "FBAR",
-    "fatca": "FATCA",
-    "fica": "FICA",
-    "fbar": "FBAR",
-
-    # Criminal / regulatory / administrative
-    "dui": "DUI",
-    "dwi": "DWI",
-    "owi": "OWI",
-    "dwai": "DWAI",
-    "felony": "Felony",
-    "misd": "Misdemeanor",
-    "misdemeanor": "Misdemeanor",
-    "bail": "Bail",
-    "probation": "Probation",
-    "parole": "Parole",
-    "foia": "FOIA",
-    "atip": "ATIP",
-    "judicial_review": "Judicial Review",
-    "jr": "Judicial Review",
-
-    # Bankruptcy / insolvency
-    "bk": "Bankruptcy",
-    "bky": "Bankruptcy",
-    "c11": "Chapter 11",
-    "ch11": "Chapter 11",
-    "ch7": "Chapter 7",
-    "ch13": "Chapter 13",
-    "noi": "Notice of Intention",
-    "ccaa": "CCAA",
-    "bIA".lower(): "BIA",
-    "bia": "BIA",
-    "proposal": "Proposal",
-    "receivership": "Receivership",
-
-    # Nonprofit / charity
-    "nfp": "Not-for-Profit",
-    "ngo": "NGO",
-    "501c3": "501(c)(3)",
-    "charity": "Charity",
-    "society": "Society",
-    "foundation": "Foundation",
 }
 
 PROJECT_STOPWORDS = set(ENGLISH_STOP_WORDS).union({
-    # Generic matter/project noise
-    "matter", "matters", "client", "clients", "file", "files", "project", "projects",
-    "case", "cases", "general", "legal", "services", "service", "work", "works",
-    "task", "tasks", "item", "items", "issue", "issues", "thing", "things",
-    "misc", "miscellaneous", "other", "various", "related", "regarding", "re",
-    "about", "concerning", "respecting", "involving", "including",
-
-    # Generic legal task verbs
-    "review", "reviews", "reviewing", "draft", "drafts", "drafting", "drafted",
-    "prepare", "prepares", "preparation", "prepared", "revise", "revises",
-    "revising", "revised", "edit", "edits", "editing", "edited", "update",
-    "updates", "updating", "updated", "finalize", "finalized", "finalizing",
-    "complete", "completed", "completion", "assist", "assistance", "help",
-    "support", "provide", "provided", "providing", "handle", "handled",
-    "handling", "manage", "managed", "management",
-
-    # Communication/admin noise
-    "advice", "advise", "advising", "consultation", "consult", "consulting",
-    "conference", "conferences", "email", "emails", "mail", "call", "calls",
-    "phone", "telephone", "meeting", "meetings", "discussion", "discussions",
-    "correspondence", "letter", "letters", "memo", "memorandum", "note", "notes",
-    "message", "messages", "follow", "followup", "follow-up", "followups",
-    "touchbase", "touch-base", "internal", "admin", "administrative",
-    "coordination", "coordinate", "coordinating", "schedule", "scheduling",
-
-    # Status / lifecycle noise
-    "new", "old", "open", "opened", "closed", "close", "closing", "active",
-    "inactive", "pending", "ongoing", "completed", "complete", "initial",
-    "final", "preliminary", "temporary", "temp", "draft", "drafts",
-    "current", "previous", "prior", "future", "potential", "prospective",
-    "proposed", "possible", "standard", "regular", "routine", "urgent",
-    "rush", "high", "low",
-
-    # Unknown / missing-value noise
-    "na", "n/a", "none", "null", "nan", "unknown", "unk", "tbd", "tba",
-    "todo", "blank", "missing", "untitled", "unnamed", "no", "name",
-    "mattername", "test", "sample", "demo", "placeholder",
-
-    # Business entity suffixes / firm-name noise
-    "ltd", "limited", "inc", "incorporated", "corp", "corporation", "co",
-    "company", "companies", "llc", "pllc", "lp", "llp", "lllp", "pc",
-    "p.c", "p.c.", "plc", "gmbh", "sa", "s.a", "s.a.", "sarl", "bv",
-    "ag", "nv", "pty", "pte", "group", "holdings", "holding", "partners",
-    "partnership", "ventures", "venture", "capital", "management", "solutions",
-    "consulting", "advisors", "adviser", "associates", "enterprises",
-    "industries", "international", "global", "canada", "usa", "us", "uk",
-
-    # Person/client-name glue words
-    "mr", "mrs", "ms", "miss", "dr", "prof", "sir", "madam", "estate",
-    "family", "trust", "children", "child", "spouse", "husband", "wife",
-    "father", "mother", "son", "daughter", "brother", "sister",
-
-    # Dates/months/time noise
-    "jan", "january", "feb", "february", "mar", "march", "apr", "april",
-    "may", "jun", "june", "jul", "july", "aug", "august", "sep", "sept",
-    "september", "oct", "october", "nov", "november", "dec", "december",
-    "mon", "monday", "tue", "tuesday", "wed", "wednesday", "thu", "thursday",
-    "fri", "friday", "sat", "saturday", "sun", "sunday", "today", "tomorrow",
-    "yesterday", "week", "month", "year", "annual", "quarter", "q1", "q2",
-    "q3", "q4", "fy",
-
-    # Location / address noise
-    "street", "st", "avenue", "ave", "road", "rd", "drive", "dr", "boulevard",
-    "blvd", "lane", "ln", "court", "ct", "suite", "unit", "floor", "apt",
-    "apartment", "city", "province", "state", "county", "district", "region",
-
-    # Finance/accounting noise
-    "invoice", "invoices", "billing", "bill", "bills", "payment", "payments",
-    "paid", "unpaid", "fee", "fees", "cost", "costs", "expense", "expenses",
-    "account", "accounts", "accounting", "retainer", "trust", "balance",
-    "statement", "statements", "receipt", "receipts",
-
-    # Common weak legal words — useful alone? usually no
-    "law", "lawyer", "lawyers", "attorney", "attorneys", "counsel",
-    "firm", "practice", "area", "areas", "document", "documents",
-    "form", "forms", "template", "templates", "process", "procedure",
-    "matter-specific", "specific",
-
-    # Connector / CRM / database noise
-    "clio", "altfee", "import", "export", "sync", "synced", "database",
-    "data", "record", "records", "entry", "entries", "id", "number",
-    "reference", "ref",
+    "matter", "client", "file", "general", "legal", "services", "service", "work", "review",
+    "draft", "drafting", "prepare", "preparation", "advice", "consultation", "conference",
+    "email", "call", "meeting", "internal", "admin", "administrative", "misc", "miscellaneous",
+    "new", "old", "ltd", "inc", "corp", "company", "corporation", "limited", "llc", "pllc", "group",
+    "na", "none", "unknown", "untitled", "mattername", "project", "projects", "regarding", "phone",
 })
 
 ALL_STOP_WORDS = PROJECT_STOPWORDS
@@ -1321,6 +813,9 @@ CLUSTER_ROOT_PHRASES = [
 ]
 CLUSTER_PURITY_THRESHOLD = 0.95
 FLAT_FEE_PROJECT_NAME = "Flat Fee"
+OTHERS_PROJECT_NAME = "Others"
+TOP_PROJECT_PURITY_COUNT = 10
+TOP_PROJECT_PURITY_THRESHOLD = 0.95
 
 
 def get_project_root_signal(signature: object) -> str:
@@ -1392,6 +887,10 @@ def is_flat_fee_project(value: object) -> bool:
     return str(value or "").strip().lower() == FLAT_FEE_PROJECT_NAME.lower()
 
 
+def is_others_project(value: object) -> bool:
+    return str(value or "").strip().lower() == OTHERS_PROJECT_NAME.lower()
+
+
 def enforce_cluster_root_purity(working: pd.DataFrame, cluster_col: str, signature_col: str = "project_signature") -> pd.DataFrame:
     if working.empty or cluster_col not in working.columns or signature_col not in working.columns:
         return working
@@ -1436,6 +935,230 @@ def force_flat_fee_cluster(working: pd.DataFrame, cluster_col: str, matter_name_
     working.loc[flat_fee_mask, "cluster_root_signal"] = "flat fee"
     working.loc[flat_fee_mask, "cluster_purity_note"] = "Forced flat fee group."
     return working
+
+
+def get_project_label_terms(project_name: object) -> set[str]:
+    acronym_terms = set(extract_legal_project_acronyms(project_name)) if "extract_legal_project_acronyms" in globals() else set()
+    normalized_terms = set(remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(project_name))))
+    if normalized_terms:
+        return normalized_terms.union(acronym_terms)
+    return set(tokenize_text(clean_text(project_name))).union(acronym_terms)
+
+
+def project_label_matches_text(value: object, project_name: object) -> bool:
+    if not project_name or is_flat_fee_project(project_name) or is_others_project(project_name):
+        return False
+    project_terms = get_project_label_terms(project_name)
+    if not project_terms:
+        return False
+    value_text = normalize_legal_text_for_clustering(value)
+    project_text = normalize_legal_text_for_clustering(project_name)
+    if project_text and f" {project_text} " in f" {value_text} ":
+        return True
+    value_terms = set(tokenize_text(value_text))
+    if len(project_terms) == 1:
+        return next(iter(project_terms)) in value_terms
+    return project_terms.issubset(value_terms)
+
+
+def top_time_entry_terms_for_row(row: pd.Series, text_col: str | None, top_n: int = 10) -> set[str]:
+    if not text_col or text_col not in row.index:
+        return set()
+    tokens = remove_junk_tokens(tokenize_text(normalize_legal_text_for_clustering(row.get(text_col, ""))))
+    return {term for term, _ in Counter(tokens).most_common(top_n)}
+
+
+def choose_project_reassignment(
+    row: pd.Series,
+    current_project: str,
+    candidate_projects: list[str],
+    project_terms: dict[str, set[str]],
+    project_counts: dict[str, int],
+    matter_name_col: str,
+    text_col: str | None,
+) -> tuple[str, str]:
+    matter_name = row.get(matter_name_col, "")
+    scored_matches = []
+    for candidate_project in candidate_projects:
+        if candidate_project == current_project or is_flat_fee_project(candidate_project) or is_others_project(candidate_project):
+            continue
+        terms = project_terms.get(candidate_project, set())
+        if not terms:
+            continue
+        if project_label_matches_text(matter_name, candidate_project):
+            scored_matches.append((100 + len(terms), project_counts.get(candidate_project, 0), candidate_project))
+            continue
+        matter_terms = set(tokenize_text(normalize_legal_text_for_clustering(matter_name)))
+        overlap = len(terms.intersection(matter_terms))
+        if overlap:
+            scored_matches.append((overlap, project_counts.get(candidate_project, 0), candidate_project))
+
+    if scored_matches:
+        return sorted(scored_matches, reverse=True)[0][2], "matched_other_project_name"
+
+    time_entry_terms = top_time_entry_terms_for_row(row, text_col, top_n=10)
+    if time_entry_terms:
+        keyword_matches = [
+            (len(time_entry_terms.intersection(project_terms.get(candidate_project, set()))), project_counts.get(candidate_project, 0), candidate_project)
+            for candidate_project in candidate_projects
+            if candidate_project != current_project and not is_flat_fee_project(candidate_project) and not is_others_project(candidate_project)
+        ]
+        keyword_matches = [match for match in keyword_matches if match[0] > 0]
+        if keyword_matches:
+            return sorted(keyword_matches, reverse=True)[0][2], "matched_time_entry_keyword"
+
+    return OTHERS_PROJECT_NAME, "moved_to_others"
+
+
+def enforce_top_project_name_purity(
+    working: pd.DataFrame,
+    label_col: str,
+    matter_name_col: str,
+    count_col: str,
+    text_col: str | None,
+    top_n: int = TOP_PROJECT_PURITY_COUNT,
+    min_purity: float = TOP_PROJECT_PURITY_THRESHOLD,
+) -> pd.DataFrame:
+    if working.empty or label_col not in working.columns or matter_name_col not in working.columns:
+        return working
+    working = working.copy()
+    working["project_purity_reassignment"] = ""
+    for _ in range(10):
+        changed = False
+        project_counts = (
+            working.groupby(label_col)[count_col]
+            .nunique()
+            .sort_values(ascending=False)
+            .to_dict()
+        )
+        top_projects = [
+            project for project in project_counts
+            if project and not is_flat_fee_project(project) and not is_others_project(project)
+        ][:top_n]
+        if not top_projects:
+            return working
+        candidate_projects = [
+            project for project in project_counts
+            if project and not is_others_project(project)
+        ]
+        project_terms = {project: get_project_label_terms(project) for project in candidate_projects}
+        for project_name in top_projects:
+            project_mask = working[label_col] == project_name
+            if not project_mask.any():
+                continue
+            project_df = working.loc[project_mask]
+            pure_mask = project_df[matter_name_col].apply(lambda value: project_label_matches_text(value, project_name))
+            total_matters = max(project_df[count_col].nunique(), 1)
+            pure_matters = project_df.loc[pure_mask, count_col].nunique()
+            if pure_matters / total_matters >= min_purity:
+                continue
+            impure_index = project_df.index[~pure_mask]
+            for row_index in impure_index:
+                target_project, method = choose_project_reassignment(
+                    working.loc[row_index],
+                    current_project=project_name,
+                    candidate_projects=candidate_projects,
+                    project_terms=project_terms,
+                    project_counts=project_counts,
+                    matter_name_col=matter_name_col,
+                    text_col=text_col,
+                )
+                if target_project == project_name:
+                    continue
+                working.at[row_index, label_col] = target_project
+                working.at[row_index, "project_purity_reassignment"] = (
+                    f"Moved from {project_name} by top-project purity rule: {method}."
+                )
+                changed = True
+        if not changed:
+            break
+    return working
+
+
+def rebuild_cluster_summary_from_project_names(
+    working: pd.DataFrame,
+    cluster_col: str,
+    label_col: str,
+    matter_name_col: str,
+    billing_col: str,
+    count_col: str,
+    practice_area_col: str | None,
+) -> pd.DataFrame:
+    if working.empty or label_col not in working.columns:
+        return pd.DataFrame()
+    rows = []
+    project_order = (
+        working.groupby(label_col)[count_col]
+        .nunique()
+        .sort_values(ascending=False)
+        .index
+        .tolist()
+    )
+    project_to_cluster_id = {project_name: index for index, project_name in enumerate(project_order)}
+    working[cluster_col] = working[label_col].map(project_to_cluster_id).astype(int)
+    working["display_label"] = working.apply(
+        lambda row: f"{row[label_col]} · {cluster_col.replace('_id', '').title()} {row[cluster_col]}",
+        axis=1,
+    )
+
+    for project_name in project_order:
+        project_df = working[working[label_col] == project_name].copy()
+        if project_df.empty:
+            continue
+        source_text_col = "primary_project_text" if "primary_project_text" in project_df.columns else matter_name_col
+        top_terms = get_top_terms_from_text(project_df[source_text_col], ngram_n=1, top_n=10)
+        top_bigrams = get_top_terms_from_text(project_df[source_text_col], ngram_n=2, top_n=10)
+        numeric_billing = pd.to_numeric(project_df[billing_col], errors="coerce").fillna(0)
+        practice_area_context = summarize_practice_area_context(project_df, practice_area_col)
+        root_signal = (
+            project_df["cluster_root_signal"].dropna().astype(str).mode().iloc[0]
+            if "cluster_root_signal" in project_df.columns and not project_df["cluster_root_signal"].dropna().empty
+            else ""
+        )
+        root_purity = (
+            float((project_df["cluster_root_signal"] == root_signal).mean())
+            if root_signal and "cluster_root_signal" in project_df.columns
+            else np.nan
+        )
+        purity_notes = []
+        if "cluster_purity_note" in project_df.columns:
+            purity_notes.extend(project_df["cluster_purity_note"].dropna().astype(str).loc[lambda s: s != ""].drop_duplicates().tolist())
+        if "project_purity_reassignment" in project_df.columns:
+            purity_notes.extend(project_df["project_purity_reassignment"].dropna().astype(str).loc[lambda s: s != ""].drop_duplicates().tolist())
+
+        rows.append({
+            cluster_col: project_to_cluster_id[project_name],
+            label_col: project_name,
+            "display_label": f"{project_name} · {cluster_col.replace('_id', '').title()} {project_to_cluster_id[project_name]}",
+            "matter_count": project_df[count_col].nunique(),
+            "total_billing": numeric_billing.sum(),
+            "avg_billing": numeric_billing.mean(),
+            "top_terms": ", ".join(top_terms),
+            "top_bigrams": ", ".join(top_bigrams),
+            "example_matter_names": format_examples_for_label(
+                project_df[matter_name_col],
+                label=project_name,
+                top_terms=top_terms + top_bigrams,
+                n=10,
+            ),
+            "dominant_signature_share": root_first_cluster_label(project_df[matter_name_col], min_share=0.35)[1],
+            "practice_area_null_percentage": practice_area_context["practice_area_null_percentage"],
+            "most_frequent_practice_area": practice_area_context["most_frequent_practice_area"],
+            "cluster_root_signal": root_signal,
+            "cluster_root_purity": root_purity,
+            "cluster_purity_note": " | ".join(dict.fromkeys(purity_notes)),
+        })
+
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        return summary
+    summary["flat_fee_sort"] = summary[label_col].map(is_flat_fee_project)
+    summary["others_sort"] = summary[label_col].map(is_others_project)
+    return (
+        summary
+        .sort_values(["flat_fee_sort", "others_sort", "matter_count", "total_billing"], ascending=[True, True, False, False])
+        .drop(columns=["flat_fee_sort", "others_sort"])
+    )
 
 
 # --- Cluster label validation ---
@@ -3287,13 +3010,32 @@ def create_project_clusters(
     if status_box is not None:
         status_box.success("Clustering complete.")
 
-    cluster_summary = pd.DataFrame(cluster_rows)
+    if cluster_prefix == "cluster":
+        working = enforce_top_project_name_purity(
+            working,
+            label_col=label_col,
+            matter_name_col=matter_name_col,
+            count_col=count_col,
+            text_col=text_col,
+        )
+        cluster_summary = rebuild_cluster_summary_from_project_names(
+            working,
+            cluster_col=cluster_col,
+            label_col=label_col,
+            matter_name_col=matter_name_col,
+            billing_col=billing_col,
+            count_col=count_col,
+            practice_area_col=practice_area_col,
+        )
+    else:
+        cluster_summary = pd.DataFrame(cluster_rows)
     if not cluster_summary.empty:
         cluster_summary["flat_fee_sort"] = cluster_summary[label_col].map(is_flat_fee_project)
+        cluster_summary["others_sort"] = cluster_summary[label_col].map(is_others_project)
         cluster_summary = (
             cluster_summary
-            .sort_values(["flat_fee_sort", "matter_count", "total_billing"], ascending=[True, False, False])
-            .drop(columns=["flat_fee_sort"])
+            .sort_values(["flat_fee_sort", "others_sort", "matter_count", "total_billing"], ascending=[True, True, False, False])
+            .drop(columns=["flat_fee_sort", "others_sort"])
         )
     return cluster_summary, working
 
@@ -3546,10 +3288,11 @@ def aggregate_project_categories(cluster_summary: pd.DataFrame) -> pd.DataFrame:
     )
 
     project_summary["flat_fee_sort"] = project_summary["project_name"].map(is_flat_fee_project)
+    project_summary["others_sort"] = project_summary["project_name"].map(is_others_project)
     return project_summary.sort_values(
-        ["flat_fee_sort", "total_matters", "total_billing"],
-        ascending=[True, False, False],
-    ).drop(columns=["flat_fee_sort"])
+        ["flat_fee_sort", "others_sort", "total_matters", "total_billing"],
+        ascending=[True, True, False, False],
+    ).drop(columns=["flat_fee_sort", "others_sort"])
 
 
 def build_project_ring_chart(project_summary: pd.DataFrame, color_map: dict[str, str]) -> go.Figure:
@@ -3720,12 +3463,20 @@ def render_project_ranking(project_summary: pd.DataFrame, color_map: dict[str, s
 def render_revenue_ranking(project_summary: pd.DataFrame, color_map: dict[str, str] | None = None) -> None:
     revenue_df = project_summary.copy()
     revenue_df["flat_fee_sort"] = revenue_df["project_name"].map(is_flat_fee_project)
-    revenue_df = revenue_df.sort_values(["flat_fee_sort", "total_billing"], ascending=[True, False]).drop(columns=["flat_fee_sort"]).reset_index(drop=True)
+    revenue_df["others_sort"] = revenue_df["project_name"].map(is_others_project)
+    revenue_df = revenue_df.sort_values(
+        ["flat_fee_sort", "others_sort", "total_billing"],
+        ascending=[True, True, False],
+    ).drop(columns=["flat_fee_sort", "others_sort"]).reset_index(drop=True)
     top_five = revenue_df.head(5).copy()
     top_total_project = revenue_df.iloc[0]["project_name"]
     avg_df = project_summary.copy()
     avg_df["flat_fee_sort"] = avg_df["project_name"].map(is_flat_fee_project)
-    top_avg_project = avg_df.sort_values(["flat_fee_sort", "avg_billing"], ascending=[True, False]).iloc[0]["project_name"]
+    avg_df["others_sort"] = avg_df["project_name"].map(is_others_project)
+    top_avg_project = avg_df.sort_values(
+        ["flat_fee_sort", "others_sort", "avg_billing"],
+        ascending=[True, True, False],
+    ).iloc[0]["project_name"]
 
     rows = []
     # Display top 5 by total revenue
